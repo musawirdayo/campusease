@@ -3,7 +3,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { Exam } from "@/lib/types";
 import { normalDate, normalSlot, uniqueExams } from "@/lib/exam-utils";
-import { findExamClashes, findSharedSlots } from "@/lib/exam-utils";
+import {
+  findExamClashes,
+  findSharedSlots,
+  mergeSharedSlots,
+} from "@/lib/exam-utils";
 import { useSaved } from "@/lib/student-schedules";
 import { AppNav } from "@/components/AppNav";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
@@ -289,7 +293,15 @@ function Index() {
         (e) =>
           e.prog === prog && Number(e.sem) === s && (!sec || e.sec === sec),
       );
-      applyResult(uniqueExams(matches), loadedLabel, prog, sem, sec);
+      // One paper per registered code shows up twice; section picking lists
+      // the current code only (repeaters use custom picking below).
+      applyResult(
+        mergeSharedSlots(uniqueExams(matches)),
+        loadedLabel,
+        prog,
+        sem,
+        sec,
+      );
     } else {
       const picked = new Set(customPicks);
       const matches = loadedExams.filter((e) => picked.has(examKey(e)));

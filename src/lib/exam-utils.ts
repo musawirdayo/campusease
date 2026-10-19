@@ -71,6 +71,52 @@ export function findExamClashes(exams: Exam[]): ExamClash[] {
 
 export type SharedSlot = { date: string; a: Exam; b: Exam };
 
+/**
+ * Collapse shared-slot duplicates down to ONE row per paper, keeping the
+ * CURRENT catalog's code.
+ *
+ * Same class + same course title + same date + same slot with several codes is
+ * one exam session listed per registered code (current students + repeaters).
+ * Section-based picking should show it once — a BCS-4A student takes CSC262,
+ * not CSC262 *and* CSC462.
+ *
+ * Canonical-code rule (documented, not magic): prefer the row with MORE room
+ * assignments, then the lexically smaller code. Cross-checked against the
+ * FA26 middle datesheet's every dual-code pair — the current code is always
+ * the smaller one and the only one that appears in the weekly timetable:
+ * CSC262/CSC462, CSC232/CSC432, CSC275/CSC340, CSC210/CSC410.
+ *
+ * Only applied to section-based listing. Custom/repeater picking deliberately
+ * keeps every code, so repeaters can still find their own paper.
+ */
+export function mergeSharedSlots(exams: Exam[]): Exam[] {
+  const groups = new Map<string, Exam[]>();
+  for (const e of exams) {
+    const k = `${e.prog}|${e.sem}|${e.sec}|${e.course
+      .trim()
+      .toLowerCase()}|${e.date}|${e.time}`;
+    const g = groups.get(k);
+    if (g) g.push(e);
+    else groups.set(k, [e]);
+  }
+  const out: Exam[] = [];
+  for (const [, g] of groups) {
+    if (g.length === 1 || new Set(g.map((e) => e.code)).size === 1) {
+      out.push(...g);
+      continue;
+    }
+    const pick = [...g].sort(
+      (x, y) =>
+        y.rooms.filter(Boolean).length - x.rooms.filter(Boolean).length ||
+        x.code.localeCompare(y.code),
+    )[0];
+    out.push(pick);
+  }
+  return out.sort(
+    (a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time),
+  );
+}
+
 /** Same class + same course title under two codes in one slot. Shown as a
  *  neutral "one paper, registered codes" note, never as a clash. */
 export function findSharedSlots(exams: Exam[]): SharedSlot[] {

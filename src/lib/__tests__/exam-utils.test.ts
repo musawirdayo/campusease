@@ -5,6 +5,7 @@ import {
   findExamClashes,
   findSharedSlots,
   isSharedSlot,
+  mergeSharedSlots,
   normalDate,
   normalSlot,
   examRange,
@@ -116,6 +117,44 @@ describe("exam-utils", () => {
       const other = { ...ai("CSC462"), course: "Theory of Computation" };
       const clashes = findExamClashes([ai("CSC262"), other]);
       expect(clashes).toHaveLength(1);
+    });
+
+    describe("mergeSharedSlots — one row per paper for section picking", () => {
+      it("keeps the current code (smaller, richer rooms) and drops the repeater code", () => {
+        const baiCurrent = {
+          ...ai("CSC262"),
+          rooms: ["105", "112", "G-08"],
+        }; // BAI-4A shape from the real sheet
+        const merged = mergeSharedSlots([baiCurrent, ai("CSC462")]);
+        expect(merged).toHaveLength(1);
+        expect(merged[0].code).toBe("CSC262");
+        expect(merged[0].rooms).toEqual(["105", "112", "G-08"]);
+      });
+
+      it("prefers the smaller code when rooms are equal (CSC210/CSC410 case)", () => {
+        const a = {
+          ...ai("CSC210", "BCT"),
+          course: "Professional Practices",
+        };
+        const b = {
+          ...ai("CSC410", "BCT"),
+          course: "Professional Practices",
+        };
+        const merged = mergeSharedSlots([a, b]);
+        expect(merged[0].code).toBe("CSC210");
+      });
+
+      it("doesn't touch different courses, classes, slots — or repeater-facing single rows", () => {
+        const list = [
+          ai("CSC262"),
+          // same code, different section → untouched
+          ai("CSC262", "BAI", "B"),
+          // different course, same slot → untouched (a genuine pair)
+          { ...ai("CSC462"), course: "Theory of Computation" },
+        ];
+        const merged = mergeSharedSlots(list);
+        expect(merged).toHaveLength(3);
+      });
     });
   });
 
