@@ -91,6 +91,11 @@ function Index() {
   const { data: publishedDatesheets = [] } = usePublishedDatesheets();
   const publishedCount = publishedDatesheets.length;
 
+  // Deep-link params from the landing page (read once from the URL)
+  const deepDocRef = useRef(false);
+  const deepGenRef = useRef(false);
+  const autoPendingRef = useRef(false);
+
   // Default to the strongest available source: an official published doc
   // wins, then the built-in CS datesheet, then a manual PDF upload.
   useEffect(() => {
@@ -142,6 +147,66 @@ function Index() {
     if (last.customPicks) setCustomPicks(last.customPicks);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
+
+  // Landing deep link: /exams?doc=ID loads a published datesheet immediately.
+  useEffect(() => {
+    if (deepDocRef.current) return;
+    const qDoc = new URLSearchParams(window.location.search).get("doc")?.trim();
+    if (!qDoc) {
+      deepDocRef.current = true;
+      return;
+    }
+    if (!publishedDatesheets.length) return;
+    const doc = publishedDatesheets.find(
+      (d) => (d as unknown as { id: string }).id === qDoc,
+    );
+    if (!doc) {
+      deepDocRef.current = true;
+      return;
+    }
+    deepDocRef.current = true;
+    pickPublishedDoc(qDoc);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publishedDatesheets]);
+
+  // Landing deep link: /exams?prog=&sem=&sec=&auto=1 pre-fills the filters and
+  // auto-generates as soon as any datesheet is loaded (restored one counts).
+  useEffect(() => {
+    if (deepGenRef.current) return;
+    const q = new URLSearchParams(window.location.search);
+    const qProg = q.get("prog")?.trim() || "";
+    const qSem = q.get("sem")?.trim() || "";
+    const qSec = q.get("sec")?.trim() || "";
+    const qAuto = q.get("auto") === "1";
+    if (!qProg && !qSem && !qSec && !qAuto) {
+      deepGenRef.current = true;
+      return;
+    }
+    if (ready && !loadedExams && qAuto && publishedCount === 0) {
+      // nothing restored/loaded yet — boot the built-in CS sheet so ?auto=1
+      // has something to work with
+      loadBuiltIn();
+    }
+    if (!ready || !loadedExams) return;
+    deepGenRef.current = true;
+    if (qProg) setProg(qProg);
+    if (qSem) setSem(qSem);
+    if (qSec) setSec(qSec);
+    if (qAuto) {
+      if (mode === "custom") setMode("regular");
+      autoPendingRef.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, loadedExams, publishedCount]);
+
+  // Fire the pending auto-generate once the prefilled filters land in state.
+  useEffect(() => {
+    if (!autoPendingRef.current) return;
+    if (mode !== "regular" || !loadedExams || !prog || !sem) return;
+    autoPendingRef.current = false;
+    generate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadedExams, prog, sem, mode]);
 
   useEffect(() => {
     fetch("/api/counter", { cache: "no-store" })

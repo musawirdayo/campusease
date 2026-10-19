@@ -96,6 +96,8 @@ function ClassesPage() {
   const [err, setErr] = useState("");
   const [view, setView] = useState<"grid" | "list">("grid");
   const [generated, setGenerated] = useState(0);
+  const deepSectionRef = useRef(false);
+  const deepPubRef = useRef(false);
   const {
     data: bundle,
     setData: setBundle,
@@ -146,6 +148,70 @@ function ClassesPage() {
     setView(bundle.view === "list" ? "list" : "grid");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeReady]);
+
+  // One-click deep link: /classes?section=X loads a whole CS section's week.
+  // Built directly off CS_SESSIONS so it's independent of the restored source.
+  useEffect(() => {
+    if (!storeReady || deepSectionRef.current) return;
+    const deepSection = new URLSearchParams(window.location.search)
+      .get("section")
+      ?.trim();
+    if (!deepSection) return;
+    deepSectionRef.current = true;
+    const builtIn = new Map<string, Offering>();
+    for (const s of CS_SESSIONS) {
+      const key = `${s.cls}|${s.code}`;
+      if (!builtIn.has(key))
+        builtIn.set(key, {
+          key,
+          cls: s.cls,
+          code: s.code,
+          title: s.title,
+        });
+    }
+    const target = [...builtIn.values()].filter((o) => o.cls === deepSection);
+    if (!target.length) return;
+    const list = target.map((o) => ({
+      id: uid(),
+      cls: o.cls,
+      code: o.code,
+      title: o.title,
+      sessions: dedupeSessions(
+        CS_SESSIONS.filter((s) => s.cls === o.cls && s.code === o.code).map(
+          (s) => ({ ...s, sid: uid() }),
+        ),
+      ),
+    }));
+    const n = list.reduce((sum, p) => sum + p.sessions.length, 0);
+    setSrc("cs");
+    setCustom(null);
+    setPublishedId("");
+    setPicks(list);
+    toast.success(`${deepSection} timetable loaded`, {
+      description: `${target.length} courses · ${n} sessions`,
+    });
+    // scroll to the result card (its grid populates right after)
+    const t = setTimeout(() => {
+      document
+        .getElementById("timetable-card")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 150);
+    return () => clearTimeout(t);
+  }, [storeReady]);
+
+  // One-click deep link: /classes?published=ID opens a published timetable.
+  useEffect(() => {
+    if (deepPubRef.current) return;
+    const deepPublished = new URLSearchParams(window.location.search)
+      .get("published")
+      ?.trim();
+    if (!deepPublished || !publishedDocs.some((d) => d.id === deepPublished))
+      return;
+    deepPubRef.current = true;
+    setPublishedId(deepPublished);
+    setSrc("published");
+    setPicks([]);
+  }, [publishedDocs]);
 
   // keep server copy in sync (debounced by the hook)
   const syncRef = useRef(false);
@@ -735,179 +801,183 @@ function ClassesPage() {
             </SectionCard>
           </div>
 
-          <SectionCard>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <SectionLabel>Your weekly timetable</SectionLabel>
-                <p className="mt-1 text-xs text-muted-foreground">{ttLabel}</p>
+          <div id="timetable-card" className="scroll-mt-16 min-w-0">
+            <SectionCard>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <SectionLabel>Your weekly timetable</SectionLabel>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {ttLabel}
+                  </p>
+                </div>
+                <div className="hidden print:block text-[10px] text-muted-foreground">
+                  CampusEase · printed {new Date().toLocaleDateString("en-GB")}
+                </div>
               </div>
-              <div className="hidden print:block text-[10px] text-muted-foreground">
-                CampusEase · printed {new Date().toLocaleDateString("en-GB")}
-              </div>
-            </div>
-            {clashes.length > 0 && (
-              <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-                <strong>
-                  ⚠ {clashes.length} clash{clashes.length === 1 ? "" : "es"} in
-                  this timetable:
-                </strong>
-                <ul className="list-disc ml-4">
-                  {clashes.map((c, i) => (
-                    <li key={i}>
-                      {c.day}: {c.label}
-                    </li>
-                  ))}
-                </ul>
-                {fixes.length > 0 && (
-                  <div className="mt-2 border-t border-destructive/30 pt-2 text-foreground print:hidden">
-                    <div className="font-medium mb-1">
-                      Clash resolver — try another section:
-                    </div>
-                    {fixes.map((f, i) => (
-                      <button
-                        key={i}
-                        onClick={() => {
-                          switchSection(f.pickId, f.to);
-                          toast.success(`${f.code} moved to ${f.to}`);
-                        }}
-                        className="mr-1 mb-1 rounded border border-input bg-background px-2 py-1"
-                      >
-                        {f.code}: {f.from} → {f.to} ({f.after} left)
-                      </button>
+              {clashes.length > 0 && (
+                <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+                  <strong>
+                    ⚠ {clashes.length} clash{clashes.length === 1 ? "" : "es"}{" "}
+                    in this timetable:
+                  </strong>
+                  <ul className="list-disc ml-4">
+                    {clashes.map((c, i) => (
+                      <li key={i}>
+                        {c.day}: {c.label}
+                      </li>
                     ))}
-                    <button
-                      onClick={fixAll}
-                      className="ml-1 rounded bg-primary text-primary-foreground px-2 py-1"
+                  </ul>
+                  {fixes.length > 0 && (
+                    <div className="mt-2 border-t border-destructive/30 pt-2 text-foreground print:hidden">
+                      <div className="font-medium mb-1">
+                        Clash resolver — try another section:
+                      </div>
+                      {fixes.map((f, i) => (
+                        <button
+                          key={i}
+                          onClick={() => {
+                            switchSection(f.pickId, f.to);
+                            toast.success(`${f.code} moved to ${f.to}`);
+                          }}
+                          className="mr-1 mb-1 rounded border border-input bg-background px-2 py-1"
+                        >
+                          {f.code}: {f.from} → {f.to} ({f.after} left)
+                        </button>
+                      ))}
+                      <button
+                        onClick={fixAll}
+                        className="ml-1 rounded bg-primary text-primary-foreground px-2 py-1"
+                      >
+                        Fix all
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {picks.length === 0 ? (
+                <div className="py-14 text-center">
+                  <div className="text-3xl">🗓️</div>
+                  <div className="mt-2 text-sm font-medium">
+                    Your weekly timetable appears here
+                  </div>
+                  <div className="mt-1 text-sm text-muted-foreground max-w-md mx-auto">
+                    Start with <strong>Step 2</strong> to load your whole
+                    section's timetable in one click, or search a course in{" "}
+                    <strong>Step 3</strong>. Clashes are flagged automatically
+                    and we suggest clash-free sections you can switch to.
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex justify-end print:hidden">
+                    <div className="w-56">
+                      <Segmented
+                        options={[
+                          { id: "grid", label: "Week grid" },
+                          { id: "list", label: "List" },
+                        ]}
+                        value={view}
+                        onChange={setView}
+                      />
+                    </div>
+                  </div>
+                  {view === "grid" && (
+                    <WeekGrid
+                      picks={picks}
+                      title="My weekly class timetable"
+                      subtitle={ttLabel}
+                    />
+                  )}
+                  {view === "list" &&
+                    DAYS.map((d) => {
+                      const items = picks
+                        .flatMap((p) =>
+                          p.sessions
+                            .filter((s) => s.day === d)
+                            .map((s) => ({ p, s })),
+                        )
+                        .sort((a, b) => toMin(a.s.start) - toMin(b.s.start));
+                      if (!items.length) return null;
+                      return (
+                        <div key={d}>
+                          <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                            {DAY_FULL[d]}
+                          </div>
+                          {items.map(({ p, s }) => (
+                            <div
+                              key={s.sid}
+                              className={`flex gap-3 rounded-md border px-3 py-2 mb-1 text-sm ${clashSids.has(s.sid) ? "border-destructive bg-destructive/10" : "border-border"}`}
+                            >
+                              <div className="w-28 shrink-0 font-mono text-xs sm:w-36">
+                                {fmt12(s.start)} – {fmt12(s.end)}
+                              </div>
+                              <div className="flex-1">
+                                <div className="font-medium">
+                                  {p.code} · {p.title}{" "}
+                                  {s.kind === "lab" && (
+                                    <span className="text-xs text-primary">
+                                      (Lab)
+                                    </span>
+                                  )}
+                                  {clashSids.has(s.sid) && (
+                                    <span className="ml-2 text-xs font-semibold text-destructive">
+                                      CLASH
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {p.cls} · {s.room || "Room TBA"} ·{" "}
+                                  {s.instructor}
+                                  {s.edited ? " · edited" : ""}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  <label className="mt-2 flex items-start gap-2.5 rounded-md border border-border bg-muted/40 px-3 py-2.5 cursor-pointer select-none hover:bg-muted transition print:hidden">
+                    <input
+                      type="checkbox"
+                      checked={confirmed}
+                      onChange={(e) => setConfirmed(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 accent-primary cursor-pointer"
+                    />
+                    <span className="text-sm text-foreground">
+                      I will double-check this timetable with my department's
+                      official timetable.
+                    </span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-2 mt-3 print:hidden">
+                    <PrimaryButton
+                      disabled={!confirmed}
+                      onClick={() => {
+                        bumpCounter();
+                        downloadTimetablePdf(picks, ttLabel).catch(() =>
+                          toast.error(
+                            "Couldn't create the PDF. Try Print instead.",
+                          ),
+                        );
+                      }}
                     >
-                      Fix all
+                      Download PDF
+                    </PrimaryButton>
+                    <button
+                      disabled={!confirmed}
+                      onClick={() => {
+                        bumpCounter();
+                        setView("grid");
+                        setTimeout(() => window.print(), 50);
+                      }}
+                      className="rounded-md border border-input bg-background px-4 py-2.5 text-sm font-medium hover:bg-muted transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Print / Save PDF
                     </button>
                   </div>
-                )}
-              </div>
-            )}
-            {picks.length === 0 ? (
-              <div className="py-14 text-center">
-                <div className="text-3xl">🗓️</div>
-                <div className="mt-2 text-sm font-medium">
-                  Your weekly timetable appears here
                 </div>
-                <div className="mt-1 text-sm text-muted-foreground max-w-md mx-auto">
-                  Start with <strong>Step 2</strong> to load your whole
-                  section's timetable in one click, or search a course in{" "}
-                  <strong>Step 3</strong>. Clashes are flagged automatically and
-                  we suggest clash-free sections you can switch to.
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="flex justify-end print:hidden">
-                  <div className="w-56">
-                    <Segmented
-                      options={[
-                        { id: "grid", label: "Week grid" },
-                        { id: "list", label: "List" },
-                      ]}
-                      value={view}
-                      onChange={setView}
-                    />
-                  </div>
-                </div>
-                {view === "grid" && (
-                  <WeekGrid
-                    picks={picks}
-                    title="My weekly class timetable"
-                    subtitle={ttLabel}
-                  />
-                )}
-                {view === "list" &&
-                  DAYS.map((d) => {
-                    const items = picks
-                      .flatMap((p) =>
-                        p.sessions
-                          .filter((s) => s.day === d)
-                          .map((s) => ({ p, s })),
-                      )
-                      .sort((a, b) => toMin(a.s.start) - toMin(b.s.start));
-                    if (!items.length) return null;
-                    return (
-                      <div key={d}>
-                        <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
-                          {DAY_FULL[d]}
-                        </div>
-                        {items.map(({ p, s }) => (
-                          <div
-                            key={s.sid}
-                            className={`flex gap-3 rounded-md border px-3 py-2 mb-1 text-sm ${clashSids.has(s.sid) ? "border-destructive bg-destructive/10" : "border-border"}`}
-                          >
-                            <div className="w-28 shrink-0 font-mono text-xs sm:w-36">
-                              {fmt12(s.start)} – {fmt12(s.end)}
-                            </div>
-                            <div className="flex-1">
-                              <div className="font-medium">
-                                {p.code} · {p.title}{" "}
-                                {s.kind === "lab" && (
-                                  <span className="text-xs text-primary">
-                                    (Lab)
-                                  </span>
-                                )}
-                                {clashSids.has(s.sid) && (
-                                  <span className="ml-2 text-xs font-semibold text-destructive">
-                                    CLASH
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-xs text-muted-foreground">
-                                {p.cls} · {s.room || "Room TBA"} ·{" "}
-                                {s.instructor}
-                                {s.edited ? " · edited" : ""}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  })}
-                <label className="mt-2 flex items-start gap-2.5 rounded-md border border-border bg-muted/40 px-3 py-2.5 cursor-pointer select-none hover:bg-muted transition print:hidden">
-                  <input
-                    type="checkbox"
-                    checked={confirmed}
-                    onChange={(e) => setConfirmed(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 accent-primary cursor-pointer"
-                  />
-                  <span className="text-sm text-foreground">
-                    I will double-check this timetable with my department's
-                    official timetable.
-                  </span>
-                </label>
-                <div className="grid grid-cols-2 gap-2 mt-3 print:hidden">
-                  <PrimaryButton
-                    disabled={!confirmed}
-                    onClick={() => {
-                      bumpCounter();
-                      downloadTimetablePdf(picks, ttLabel).catch(() =>
-                        toast.error(
-                          "Couldn't create the PDF. Try Print instead.",
-                        ),
-                      );
-                    }}
-                  >
-                    Download PDF
-                  </PrimaryButton>
-                  <button
-                    disabled={!confirmed}
-                    onClick={() => {
-                      bumpCounter();
-                      setView("grid");
-                      setTimeout(() => window.print(), 50);
-                    }}
-                    className="rounded-md border border-input bg-background px-4 py-2.5 text-sm font-medium hover:bg-muted transition disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Print / Save PDF
-                  </button>
-                </div>
-              </div>
-            )}
-          </SectionCard>
+              )}
+            </SectionCard>
+          </div>
         </div>
       </main>
     </div>

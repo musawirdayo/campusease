@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { CalendarCheck2, FileText } from "lucide-react";
 import { AppNav } from "@/components/AppNav";
@@ -7,7 +7,7 @@ import {
   usePublishedDatesheets,
   usePublishedTimetables,
 } from "@/lib/published";
-import { CS_SESSIONS, CS_TT_VERSION } from "@/lib/cs-timetable";
+import { CS_CLASSES, CS_SESSIONS, CS_TT_VERSION } from "@/lib/cs-timetable";
 import { CS_DATESHEET_EXAMS, CS_DATESHEET_VERSION } from "@/lib/cs-datesheet";
 import { DAY_FULL, fmt12, toMin } from "@/lib/timetable";
 import type { Day } from "@/lib/types";
@@ -43,6 +43,33 @@ function Landing() {
   // Days/times only after mount — SSR has the server clock, the client must
   // agree on first paint to avoid hydration mismatches.
   const [mounted, setMounted] = useState(false);
+  const navigate = useNavigate();
+  const [quickSection, setQuickSection] = useState("");
+
+  // Next upcoming exam from the built-in CS datesheet (dates are ISO).
+  const nextExam = useMemo<(typeof CS_DATESHEET_EXAMS)[number] | null>(() => {
+    const floor = new Date().setHours(0, 0, 0, 0);
+    let best: (typeof CS_DATESHEET_EXAMS)[number] | null = null;
+    for (const e of CS_DATESHEET_EXAMS) {
+      const dt = new Date(e.date + "T00:00:00");
+      if (isNaN(dt.getTime()) || dt.getTime() < floor) continue;
+      if (!best || e.date < best.date) best = e;
+    }
+    return best;
+  }, []);
+  const daysToExam = nextExam
+    ? Math.round(
+        (new Date(nextExam.date + "T00:00:00").getTime() -
+          new Date().setHours(0, 0, 0, 0)) /
+          86400000,
+      )
+    : 0;
+  const fmtExam = (iso: string) =>
+    new Date(iso + "T00:00:00").toLocaleDateString("en-GB", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+    });
   useEffect(() => {
     setMounted(true);
     const t = setInterval(() => setNow(new Date()), 30_000);
@@ -138,6 +165,40 @@ function Landing() {
               </Link>
             </div>
 
+            {/* One-click start — straight into the builder with the section picked */}
+            <form
+              onSubmit={(e) => e.preventDefault()}
+              className="mt-5 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-3 py-2.5 text-sm animate-in fade-in slide-in-from-bottom-2 duration-500 fill-mode-both [animation-delay:150ms]"
+            >
+              <CalendarCheck2 className="size-4 shrink-0 text-primary" />
+              <select
+                value={quickSection}
+                onChange={(e) => setQuickSection(e.target.value)}
+                aria-label="Which section are you in?"
+                className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-xs"
+              >
+                <option value="">One-click start: pick your section…</option>
+                {CS_CLASSES.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={!quickSection}
+                onClick={() =>
+                  navigate({
+                    to: "/classes",
+                    search: { section: quickSection },
+                  })
+                }
+                className="shrink-0 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground whitespace-nowrap transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Open my timetable →
+              </button>
+            </form>
+
             {/* live line */}
             <div className="mt-5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
               <span className="relative flex size-2">
@@ -160,6 +221,21 @@ function Landing() {
                   · {publishedDepts.length} department schedules published
                 </span>
               )}
+            </div>
+
+            {/* Next-exam nudge from the built-in CS datesheet */}
+            <div className="mt-3">
+              <Link
+                to="/exams"
+                className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-medium text-foreground transition hover:border-primary/60 animate-in fade-in slide-in-from-bottom-2 duration-500 fill-mode-both [animation-delay:250ms]"
+              >
+                <FileText className="size-3.5 text-primary" />
+                {!mounted
+                  ? "Upcoming exams"
+                  : nextExam
+                    ? `Next CS exam · ${fmtExam(nextExam.date)} · ${fmt12(nextExam.time.split("-")[0])} · in ${daysToExam} day${daysToExam === 1 ? "" : "s"}`
+                    : "Midterms over — next sheet lands here"}
+              </Link>
             </div>
           </div>
 
@@ -258,6 +334,35 @@ function Landing() {
             cta="Generate"
           />
         </section>
+
+        {/* Beyond CS — everything the owner published, one tap away */}
+        {publishedDepts.length > 0 && (
+          <section className="mt-6">
+            <SectionLabel>Beyond CS — published schedules</SectionLabel>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {timetables.map((d) => (
+                <Link
+                  key={`tt-${d.id}`}
+                  to="/classes"
+                  search={{ published: d.id }}
+                  className="rounded-full border border-input bg-card px-3 py-1.5 text-xs transition hover:border-primary/50 hover:bg-muted"
+                >
+                  📐 {d.departments?.name ?? d.title} · classes
+                </Link>
+              ))}
+              {datesheets.map((d) => (
+                <Link
+                  key={`ds-${d.id}`}
+                  to="/exams"
+                  search={{ doc: d.id }}
+                  className="rounded-full border border-input bg-card px-3 py-1.5 text-xs transition hover:border-primary/50 hover:bg-muted"
+                >
+                  📝 {d.departments?.name ?? d.title} · exams
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
       </main>
     </div>
   );
