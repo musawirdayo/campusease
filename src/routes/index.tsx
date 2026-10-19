@@ -125,19 +125,20 @@ function Landing() {
                 CampusEase · class &amp; exam schedules
               </p>
               <h1 className="mt-6 text-[2.7rem] leading-[1.02] font-semibold tracking-tight sm:text-6xl">
-                One PDF in.
+                Your timetables,
                 <br />
-                Your whole week out,
-                <br />
-                <span className="text-primary">clash-free</span>.
+                in a few
+                <span className="text-primary"> clicks</span>.
               </h1>
               <p className="mt-6 max-w-md text-base text-muted-foreground sm:text-lg">
-                CampusEase turns your department's timetable and datesheet
-                sheets into{" "}
+                Computer Science is{" "}
+                <span className="text-foreground font-medium">built in</span> —
+                pick your section and you're done. Other departments: upload the
+                official timetable or datesheet PDF once, and get{" "}
                 <span className="text-foreground font-medium">
                   your personal, clash-checked schedule
                 </span>{" "}
-                — for classes and exams. No sign-up. Nothing to install.
+                for classes and exams. No sign-up, nothing to install.
               </p>
 
               <div className="mt-8 flex flex-wrap items-center gap-3">
@@ -246,8 +247,8 @@ function Landing() {
               Sheet 01 — what changes
             </p>
             <h2 className="mt-4 max-w-xl text-2xl font-semibold tracking-tight sm:text-3xl">
-              The department publishes one dense PDF for everyone. You get the
-              rows that are{" "}
+              No built-in schedule for your department? One upload of the
+              official PDF — and you keep the rows that are{" "}
               <span className="underline decoration-primary/60 decoration-2 underline-offset-4 font-semibold">
                 yours
               </span>
