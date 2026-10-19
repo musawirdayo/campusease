@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 
 const base =
-  "px-3 py-1.5 rounded-md text-sm font-medium transition whitespace-nowrap";
+  "px-2.5 sm:px-3 py-1.5 rounded-md text-sm font-medium transition whitespace-nowrap";
 const active = { className: "bg-primary text-primary-foreground" };
 const inactive = {
   className: "text-muted-foreground hover:text-foreground hover:bg-muted",
@@ -44,14 +44,17 @@ export function AppNav() {
         <Link to="/" className="font-semibold tracking-tight">
           Campus<span className="text-primary">Ease</span>
         </Link>
-        <div className="flex items-center gap-1 overflow-x-auto">
+        <div className="flex items-center gap-0.5 sm:gap-1">
           <Link
             to="/classes"
             className={base}
             activeProps={active}
             inactiveProps={inactive}
           >
-            Class timetable
+            <span aria-hidden="true" className="sm:hidden">
+              Timetable
+            </span>
+            <span className="hidden sm:inline">Class timetable</span>
           </Link>
           <Link
             to="/exams"

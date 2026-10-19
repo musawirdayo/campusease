@@ -111,10 +111,10 @@ function Landing() {
       <AppNav />
       <main className="mx-auto max-w-6xl px-4 pb-20">
         {/* Hero + live preview */}
-        <section className="grid items-center gap-10 pt-12 pb-4 sm:pt-16 lg:grid-cols-[1fr_380px]">
+        <section className="grid items-center gap-6 pt-8 pb-4 sm:gap-10 sm:pt-16 lg:grid-cols-[1fr_380px]">
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 fill-mode-both">
             <SectionLabel>Built for students · no account needed</SectionLabel>
-            <h1 className="mt-3 text-4xl font-semibold tracking-tight sm:text-5xl">
+            <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl lg:text-5xl">
               Your semester without the{" "}
               <span className="text-primary">clashes</span>.
             </h1>
@@ -182,20 +182,19 @@ function Landing() {
               )}
             </div>
             <ul className="mt-2.5 space-y-1.5">
-              {" "}
               {previewSessions.slice(0, 7).map((s, i) => {
                 const ongoing =
                   mounted && toMin(s.start) <= nowMin && nowMin < toMin(s.end);
                 return (
                   <li
                     key={`${s.code}-${s.start}-${s.room}`}
-                    className={`flex items-center gap-2.5 rounded-md border px-2.5 py-2 text-xs animate-in fade-in slide-in-from-bottom-1 duration-500 fill-mode-both [animation-delay:${(220 + i * 90).toFixed(0)}ms] ${
+                    className={`flex items-center gap-2 rounded-md border px-2.5 py-2 text-xs animate-in fade-in slide-in-from-bottom-1 duration-500 fill-mode-both [animation-delay:${(220 + i * 90).toFixed(0)}ms] sm:gap-2.5 ${
                       ongoing
                         ? "border-primary/40 bg-primary/5"
                         : "border-border"
                     }`}
                   >
-                    <span className="w-24 shrink-0 font-mono text-[11px] text-muted-foreground">
+                    <span className="w-20 shrink-0 font-mono text-[11px] text-muted-foreground sm:w-24">
                       {fmt12(s.start)} – {fmt12(s.end)}
                     </span>
                     <span className="min-w-0 flex-1 truncate font-medium">
@@ -230,7 +229,7 @@ function Landing() {
         </section>
 
         {/* Tools */}
-        <section className="mt-8 grid gap-4 md:grid-cols-2">
+        <section className="mt-6 grid gap-4 sm:mt-8 md:grid-cols-2">
           <ToolCard
             to="/classes"
             step="01 · Class timetable"
@@ -286,7 +285,7 @@ function ToolCard({
   return (
     <Link
       to={to}
-      className="group block rounded-lg border border-border bg-card p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md animate-in fade-in slide-in-from-bottom-2 duration-500 fill-mode-both [animation-delay:250ms]"
+      className="group block rounded-lg border border-border bg-card p-4 shadow-sm sm:p-5 transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md animate-in fade-in slide-in-from-bottom-2 duration-500 fill-mode-both [animation-delay:250ms]"
     >
       <div className="flex items-center justify-between gap-3">
         <SectionLabel>{step}</SectionLabel>
