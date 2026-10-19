@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Mail, MailOpen } from "lucide-react";
+import { Mail, MailOpen, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   type ContactMessage,
+  deleteContactMessage,
   getContactMessages,
   markContactRead,
 } from "@/lib/contact.functions";
@@ -38,6 +39,19 @@ function InboxPage() {
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Could not mark read",
+      );
+    }
+  }
+
+  async function del(id: string, name: string) {
+    if (!window.confirm(`Delete the message from ${name}?`)) return;
+    try {
+      await deleteContactMessage({ data: { id } });
+      setMessages((current) => current?.filter((m) => m.id !== id) ?? null);
+      toast.success("Message deleted");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not delete message",
       );
     }
   }
@@ -96,6 +110,15 @@ function InboxPage() {
                     <MailOpen /> Mark
                   </Button>
                 )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-1.5 text-destructive"
+                  aria-label={`Delete message from ${m.name}`}
+                  onClick={() => del(m.id, m.name)}
+                >
+                  <Trash2 />
+                </Button>
               </span>
             </div>
             <p className="mt-1 whitespace-pre-wrap text-muted-foreground">

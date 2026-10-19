@@ -1,4 +1,3 @@
-import { useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
 export const CONTACT = {
@@ -7,19 +6,6 @@ export const CONTACT = {
 };
 
 export function SiteFooter() {
-  const navigate = useNavigate();
-  const taps = useRef<number[]>([]);
-
-  // Unlisted owner access: three quick clicks on the tiny dot open sign-in.
-  function secretTap() {
-    const now = Date.now();
-    taps.current = [...taps.current.filter((t) => now - t < 1200), now];
-    if (taps.current.length >= 3) {
-      taps.current = [];
-      navigate({ to: "/auth", search: { redirect: "/admin" } });
-    }
-  }
-
   return (
     <footer
       id="contact"
@@ -54,12 +40,13 @@ export function SiteFooter() {
           >
             Privacy policy
           </a>
+          <a
+            href="/auth?redirect=%2Fadmin"
+            className="text-muted-foreground/70 hover:text-foreground hover:underline"
+          >
+            Admin
+          </a>
         </nav>
-        <button
-          onClick={secretTap}
-          aria-label="Owner access"
-          className="absolute left-1/2 top-0.5 -ml-1 size-1.5 rounded-full bg-border/50 opacity-60 transition hover:opacity-100 hover:bg-primary/50"
-        />
         <div>
           <div className="text-sm font-semibold">
             Your department missing, or something looks wrong?

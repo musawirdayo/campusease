@@ -78,3 +78,16 @@ export const markContactRead = createServerFn({ method: "POST" })
     if (error) throw error;
     return { ok: true };
   });
+
+export const deleteContactMessage = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context);
+    const { error } = await context.supabase
+      .from("contact_messages")
+      .delete()
+      .eq("id", data.id);
+    if (error) throw error;
+    return { ok: true };
+  });

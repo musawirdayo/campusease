@@ -46,6 +46,24 @@ public Supabase values only. Never put the service_role or AI keys behind a
 Add the variables **before** the first production deploy (or re-deploy after
 adding them).
 
+## 3.5 · Accessing the admin area on the deployed site
+
+`/admin` needs **sensitive env vars set AND the owner account granted the admin
+role** — see §3 above and `supabase/setup.sql` step 6. To reach it:
+
+1. Scroll to the footer of any page and click **Admin** (or go straight to
+   `/auth`). On desktop you can also type `admin` on any page.
+2. Sign in with your owner account — it must have the `admin` role in
+   Supabase, otherwise the workspace tools refuse to load ("Owner access
+   required").
+3. You land on `/admin`: the publisher (upload / publish / edit / archive /
+   delete any schedule document), `/admin/settings` (AI parser config) and
+   `/admin/messages` (contact inbox).
+
+If the deployed site shows "Page not found" for any route that works locally,
+check the Vercel dashboard that the *latest* deployment built from the current
+commit — stale deployments from before new routes existed return 404s.
+
 ## 4 · Supabase side (one-time, already in the SQL files)
 
 1. Run `supabase/add-student-schedules.sql` and then
