@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.output/
+.vinxi/
+.tanstack/
+.wrangler/
+.vercel/
+.nitro/
+turbo/
+bun.lock.bak
+*.local
+
+# Official PDFs are source material only — the parsed data ships in code.
+Mids D-Sheet*.pdf
+.env
+.env.*
+!.env.example
+.DS_Store
