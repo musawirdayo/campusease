@@ -1,18 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
-import {
-  ArrowRight,
-  CalendarCheck2,
-  FileText,
-  ListChecks,
-  Printer,
-  ShieldCheck,
-  Sparkles,
-  Upload,
-  Zap,
-} from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { ArrowRight, MoveRight } from "lucide-react";
 import { AppNav } from "@/components/AppNav";
-import { SectionLabel } from "@/components/form-bits";
 import {
   usePublishedDatesheets,
   usePublishedTimetables,
@@ -20,7 +9,7 @@ import {
 import { CS_CLASSES, CS_SESSIONS, CS_TT_VERSION } from "@/lib/cs-timetable";
 import { CS_DATESHEET_EXAMS, CS_DATESHEET_VERSION } from "@/lib/cs-datesheet";
 import { DAY_FULL, fmt12, toMin } from "@/lib/timetable";
-import type { Day } from "@/lib/types";
+import type { ClassSession, Day } from "@/lib/types";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -47,15 +36,34 @@ export const Route = createFileRoute("/")({
   component: Landing,
 });
 
-const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+const DAYS_ORDER: Day[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** Course ink colour, same system as the app's WeekGrid cards. */
+const ink = (n: number) => `var(--course-${n + 1})`;
 
 function Landing() {
   const [now, setNow] = useState(() => new Date());
   // Days/times only after mount — SSR has the server clock, the client must
   // agree on first paint to avoid hydration mismatches.
   const [mounted, setMounted] = useState(false);
+  const [generated, setGenerated] = useState<number | null>(null);
   const navigate = useNavigate();
   const [quickSection, setQuickSection] = useState("");
+
+  useEffect(() => {
+    setMounted(true);
+    const t = setInterval(() => setNow(new Date()), 30_000);
+    fetch("/api/counter", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j: { count?: number }) =>
+        typeof j.count === "number" ? setGenerated(j.count) : null,
+      )
+      .catch(() => {});
+    return () => clearInterval(t);
+  }, []);
+
+  // Live overlays are client-only truth; on the server we render the static sheet.
+  const nowMin = mounted ? now.getHours() * 60 + now.getMinutes() : -1;
 
   // Next upcoming exam from the built-in CS datesheet (dates are ISO).
   const nextExam = useMemo<(typeof CS_DATESHEET_EXAMS)[number] | null>(() => {
@@ -68,59 +76,14 @@ function Landing() {
     }
     return best;
   }, []);
-  const daysToExam = nextExam
-    ? Math.round(
-        (new Date(nextExam.date + "T00:00:00").getTime() -
-          new Date().setHours(0, 0, 0, 0)) /
-          86400000,
-      )
-    : 0;
-  const fmtExam = (iso: string) =>
-    new Date(iso + "T00:00:00").toLocaleDateString("en-GB", {
-      weekday: "short",
-      day: "numeric",
-      month: "short",
-    });
-  useEffect(() => {
-    setMounted(true);
-    const t = setInterval(() => setNow(new Date()), 30_000);
-    return () => clearInterval(t);
-  }, []);
 
-  // Which weekday to preview: today when classes run, else Monday.
-  const todayKey = mounted ? DAYS_SHORT[now.getDay()] : "Mon";
-  const previewDay: Day = (
-    CS_SESSIONS.some((s) => s.day === todayKey) ? todayKey : "Mon"
-  ) as Day;
-  const isWeekend = mounted && previewDay !== DAYS_SHORT[now.getDay()];
-
-  // Pick the section with the busiest preview day — a real slice of the CS timetable.
-  const sampleCls = useMemo(() => {
-    const tally = new Map<string, number>();
-    for (const s of CS_SESSIONS)
-      if (s.day === previewDay) tally.set(s.cls, (tally.get(s.cls) ?? 0) + 1);
-    return [...tally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
-  }, [previewDay]);
-
-  const previewSessions = useMemo(
-    () =>
-      CS_SESSIONS.filter(
-        (s) => s.cls === sampleCls && s.day === previewDay,
-      ).sort((a, b) => toMin(a.start) - toMin(b.start)),
-    [sampleCls, previewDay],
-  );
-
-  const nowMin = mounted ? now.getHours() * 60 + now.getMinutes() : -1;
-  const liveNow =
-    nowMin < 0
-      ? []
-      : previewSessions.filter(
-          (s) => toMin(s.start) <= nowMin && nowMin < toMin(s.end),
-        );
-
-  // Live headline line: what's on at CS right now (any section).
+  // The day sheet shown in the hero: today when classes run, else Wednesday —
+  // exactly how the app's phone view behaves. Sunday quietly shows Wednesday.
+  const dow = mounted ? now.getDay() : 1; // 0 Sun .. 6 Sat
+  const isClassDay = dow >= 1 && dow <= 6;
+  const todayKey: Day | null = isClassDay ? DAYS_ORDER[dow - 1] : null;
   const campusNow =
-    nowMin < 0
+    todayKey === null || nowMin < 0
       ? []
       : CS_SESSIONS.filter(
           (s) =>
@@ -128,437 +91,649 @@ function Landing() {
             toMin(s.start) <= nowMin &&
             nowMin < toMin(s.end),
         );
-  const nextStart = !campusNow.length
-    ? nowMin < 0
+  const nextStart =
+    todayKey === null || nowMin < 0
       ? null
       : (CS_SESSIONS.filter(
           (s) => s.day === todayKey && toMin(s.start) > nowMin,
-        ).sort((a, b) => toMin(a.start) - toMin(b.start))[0]?.start ?? null)
-    : null;
+        ).sort((a, b) => toMin(a.start) - toMin(b.start))[0]?.start ?? null);
+  const previewDay: Day =
+    todayKey && CS_SESSIONS.some((s) => s.day === todayKey) ? todayKey : "Wed";
+  const isWeekend = mounted && dow === 0;
+
+  // Busiest section on that day = a real slice of the CS timetable, like the app.
+  const sampleCls = useMemo(() => {
+    const tally = new Map<string, number>();
+    for (const s of CS_SESSIONS)
+      if (s.day === previewDay) tally.set(s.cls, (tally.get(s.cls) ?? 0) + 1);
+    return [...tally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+  }, [previewDay]);
 
   const { data: timetables = [] } = usePublishedTimetables();
   const { data: datesheets = [] } = usePublishedDatesheets();
-  const publishedDepts = [
-    ...new Set(
-      [...timetables, ...datesheets].map((d) => d.departments?.name ?? d.title),
-    ),
-  ].sort();
+  const publishedDocs = [...timetables, ...datesheets];
 
   return (
     <div className="min-h-screen bg-background text-foreground">
       <AppNav />
-      <main className="relative overflow-hidden">
-        {/* Ambient hero background: soft gradient blobs + faint grid */}
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0"
-        >
-          <div className="absolute inset-0 dot-grid [mask-image:radial-gradient(ellipse_80%_60%_at_50%_0%,black,transparent)]" />
-          <div className="absolute -top-32 left-1/2 -z-10 h-[480px] w-[820px] -translate-x-1/2 rounded-full bg-primary/8 blur-3xl" />
-          <div className="absolute top-40 right-[-140px] h-[360px] w-[360px] rounded-full bg-chart-2/10 blur-3xl" />
-          <div className="absolute top-64 left-[-160px] h-[320px] w-[320px] rounded-full bg-chart-4/10 blur-3xl" />
-        </div>
-
-        <div className="relative mx-auto max-w-6xl px-4">
-          {/* Hero */}
-          <section className="grid items-center gap-12 pt-12 pb-8 sm:pt-20 lg:grid-cols-[1.05fr_420px]">
-            <div className="animate-in fade-in slide-in-from-bottom-2 duration-700 fill-mode-both">
-              <div className="inline-flex items-center gap-2 rounded-full border border-border bg-card/80 px-3 py-1 text-xs font-medium shadow-sm backdrop-blur">
-                <Sparkles className="size-3.5 text-primary" />
-                Built for students · no account needed
-              </div>
-
-              <h1 className="mt-6 max-w-2xl text-4xl leading-[1.05] font-semibold tracking-tight sm:text-5xl lg:text-6xl">
-                Your semester,{" "}
-                <span className="bg-gradient-to-r from-primary to-chart-2 bg-clip-text text-transparent">
-                  clash-free
-                </span>
-                .
+      <main>
+        {/* ─── Hero ─────────────────────────────────────────────────────── */}
+        <section className="mx-auto max-w-[1080px] px-4 pt-14 pb-16 sm:pt-24">
+          <div className="grid items-start gap-14 lg:grid-cols-[1fr_minmax(360px,420px)] lg:gap-16">
+            <div>
+              <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.18em] text-muted-foreground border-b border-foreground/20 pb-3 inline-block">
+                CampusEase · class &amp; exam schedules
+              </p>
+              <h1 className="mt-6 text-[2.7rem] leading-[1.02] font-semibold tracking-tight sm:text-6xl">
+                One PDF in.
+                <br />
+                Your whole week out,
+                <br />
+                <span className="text-primary">clash-free</span>.
               </h1>
-              <p className="mt-5 max-w-xl text-base text-muted-foreground sm:text-lg">
-                Pick your courses and see your week laid out clean — then get
-                exactly the exams{" "}
-                <em className="font-medium text-foreground not-italic">you</em>{" "}
-                sit, with rooms, dates and instructors.
+              <p className="mt-6 max-w-md text-base text-muted-foreground sm:text-lg">
+                CampusEase turns your department's timetable and datesheet
+                sheets into{" "}
+                <span className="text-foreground font-medium">
+                  your personal, clash-checked schedule
+                </span>{" "}
+                — for classes and exams. No sign-up. Nothing to install.
               </p>
 
               <div className="mt-8 flex flex-wrap items-center gap-3">
                 <Link
                   to="/classes"
-                  className="group inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-3 text-sm font-medium text-primary-foreground shadow-sm transition hover:opacity-90"
+                  className="group inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-3 text-sm font-medium text-primary-foreground transition hover:opacity-90"
                 >
-                  <CalendarCheck2 className="size-4" /> Build my class timetable
-                  <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
+                  Open my timetable
+                  <ArrowRight className="size-4" />
                 </Link>
                 <Link
                   to="/exams"
-                  className="inline-flex items-center gap-2 rounded-lg border border-input bg-card px-5 py-3 text-sm font-medium shadow-sm transition hover:bg-muted"
+                  className="group inline-flex items-center gap-1.5 text-sm font-medium text-foreground/80 transition hover:text-foreground"
                 >
-                  <FileText className="size-4" /> Open exam schedules
+                  Generate my datesheet
+                  <MoveRight className="size-4 transition-transform group-hover:translate-x-0.5" />
                 </Link>
               </div>
 
-              {/* Trust row — three quiet facts, no clutter */}
-              <div className="mt-8 flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
-                <span className="inline-flex items-center gap-1.5 font-medium">
-                  <ShieldCheck className="size-3.5 text-primary" />
-                  Clash detection built in
+              {/* Quick start — pick a section, land in the builder */}
+              <form
+                onSubmit={(e) => e.preventDefault()}
+                className="mt-10 max-w-md border-y border-foreground/15 py-4 flex flex-wrap items-center gap-2.5"
+              >
+                <span className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.18em] text-muted-foreground shrink-0">
+                  CS section
                 </span>
-                <span className="inline-flex items-center gap-1.5 font-medium">
-                  <Printer className="size-3.5 text-primary" />
-                  Print / save as PDF
-                </span>
-                <span className="inline-flex items-center gap-1.5 font-medium">
-                  <Upload className="size-3.5 text-primary" />
-                  Works with any department's PDF
-                </span>
-              </div>
-            </div>
+                <select
+                  value={quickSection}
+                  onChange={(e) => setQuickSection(e.target.value)}
+                  aria-label="Which section are you in?"
+                  className="min-w-0 flex-1 rounded-md border border-input bg-background px-2.5 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="">Pick your section…</option>
+                  {CS_CLASSES.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.label} · {c.batch}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={!quickSection}
+                  onClick={() =>
+                    navigate({
+                      to: "/classes",
+                      search: { section: quickSection },
+                    })
+                  }
+                  className="shrink-0 rounded-md bg-primary px-4 py-2 text-xs font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
+                >
+                  Load it
+                </button>
+              </form>
 
-            {/* Live preview card */}
-            <div
-              className="group rounded-2xl border border-border bg-card p-5 shadow-xl shadow-primary/5 ring-1 ring-black/[0.02] transition-shadow hover:shadow-2xl animate-in fade-in slide-in-from-bottom-3 duration-700 fill-mode-both delay-150"
-              aria-label={`Sample timetable preview for ${DAY_FULL[previewDay]}`}
-            >
-              {/* window chrome */}
-              <div className="flex items-center justify-between">
-                <div className="flex gap-1.5">
-                  <span className="size-2.5 rounded-full bg-red-400/70" />
-                  <span className="size-2.5 rounded-full bg-yellow-400/70" />
-                  <span className="size-2.5 rounded-full bg-green-400/70" />
-                </div>
-                <span className="rounded-full bg-muted px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                  {CS_TT_VERSION} · {DAY_FULL[previewDay]}
-                  {isWeekend ? " (preview)" : ""}
-                </span>
-              </div>
-
-              <div className="mt-4 flex items-baseline justify-between gap-2">
-                <h2 className="text-sm font-semibold">{sampleCls || "—"}</h2>
-                {liveNow.length > 0 ? (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-primary px-2 py-0.5 text-[10px] font-medium text-primary-foreground">
-                    <span className="size-1.5 animate-pulse rounded-full bg-primary-foreground" />
-                    in class now
-                  </span>
+              {/* Live department pulse — real data only */}
+              <p className="mt-6 flex items-center gap-2.5 text-xs text-muted-foreground">
+                {todayKey && campusNow.length > 0 ? (
+                  <>
+                    <span className="relative flex size-2">
+                      <span className="absolute inline-flex size-2 animate-ping rounded-full bg-primary opacity-60" />
+                      <span className="relative inline-flex size-2 rounded-full bg-primary" />
+                    </span>
+                    <span>
+                      <span className="font-semibold text-foreground tabular-nums">
+                        {campusNow.length}
+                      </span>{" "}
+                      CS class{campusNow.length === 1 ? "" : "es"} in session
+                      right now
+                      {nextStart && (
+                        <span> · next starts {fmt12(nextStart)}</span>
+                      )}
+                    </span>
+                  </>
                 ) : (
-                  <span className="text-[10px] font-medium text-muted-foreground">
-                    {nextStart
-                      ? `next class ${fmt12(nextStart)}`
-                      : isWeekend
-                        ? "campus quiet"
-                        : "done for today"}
-                  </span>
+                  <>
+                    <span
+                      className={`size-2 rounded-full ${todayKey && nextStart ? "bg-primary" : "bg-muted-foreground/40"}`}
+                    />
+                    <span>
+                      {todayKey && nextStart
+                        ? `Next CS class today at ${fmt12(nextStart)}`
+                        : nextExam && mounted
+                          ? `Next CS exam ${nextExam.date}${nextExam.rooms[0] ? ` · ${nextExam.rooms[0]}` : ""}`
+                          : "CS timetable · Fall 2026"}
+                    </span>
+                  </>
                 )}
-              </div>
-
-              <ul className="mt-3 space-y-1.5">
-                {previewSessions.slice(0, 6).map((s, i) => {
-                  const ongoing =
-                    mounted &&
-                    toMin(s.start) <= nowMin &&
-                    nowMin < toMin(s.end);
-                  return (
-                    <li
-                      key={`${s.code}-${s.start}-${s.room}`}
-                      className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 text-xs transition-colors animate-in fade-in slide-in-from-bottom-1 duration-500 fill-mode-both [animation-delay:${(250 + i * 90).toFixed(0)}ms] ${
-                        ongoing
-                          ? "border-primary/40 bg-primary/5 shadow-sm"
-                          : "border-border/70 bg-background/50"
-                      }`}
-                    >
-                      <span className="w-20 shrink-0 font-mono text-[11px] text-muted-foreground">
-                        {fmt12(s.start)} – {fmt12(s.end)}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate font-medium">
-                        {s.title.length > 28
-                          ? s.title.slice(0, 28) + "…"
-                          : s.title}
-                      </span>
-                      <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                        {s.room}
-                      </span>
-                    </li>
-                  );
-                })}
-                {previewSessions.length === 0 && (
-                  <li className="rounded-lg border border-border/70 bg-background/50 px-3 py-4 text-center text-xs text-muted-foreground">
-                    No classes scheduled for this day.
-                  </li>
-                )}
-              </ul>
-
-              <p className="mt-4 border-t border-border pt-3 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                {CS_SESSIONS.length} sessions & {CS_DATESHEET_EXAMS.length}{" "}
-                exams ({CS_DATESHEET_VERSION}) built in
               </p>
             </div>
-          </section>
 
-          {/* Quick start — one quiet row, straight into the builder */}
-          <section className="mx-auto max-w-2xl pb-4">
-            <form
-              onSubmit={(e) => e.preventDefault()}
-              className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card/80 p-2 shadow-sm backdrop-blur animate-in fade-in slide-in-from-bottom-2 duration-700 [animation-delay:250ms]"
-            >
-              <span className="pl-2 text-xs font-medium text-muted-foreground">
-                CS student?
+            {/* ── THE PRODUCT: a real day sheet, exactly the app's phone view ── */}
+            <DaySheet
+              sampleCls={sampleCls || "—"}
+              previewDay={previewDay}
+              nowMin={nowMin}
+              isWeekend={isWeekend}
+            />
+          </div>
+        </section>
+
+        {/* ─── The transformation: what you have → what you keep ────────── */}
+        <section className="border-t border-foreground/15">
+          <div className="mx-auto max-w-[1080px] px-4 py-16 sm:py-20">
+            <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              Sheet 01 — what changes
+            </p>
+            <h2 className="mt-4 max-w-xl text-2xl font-semibold tracking-tight sm:text-3xl">
+              The department publishes one dense PDF for everyone. You get the
+              rows that are{" "}
+              <span className="underline decoration-primary/60 decoration-2 underline-offset-4 font-semibold">
+                yours
               </span>
-              <select
-                value={quickSection}
-                onChange={(e) => setQuickSection(e.target.value)}
-                aria-label="Which section are you in?"
-                className="min-w-0 flex-1 rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                <option value="">Pick your section…</option>
-                {CS_CLASSES.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                disabled={!quickSection}
-                onClick={() =>
-                  navigate({
-                    to: "/classes",
-                    search: { section: quickSection },
-                  })
-                }
-                className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3.5 py-2 text-xs font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Open my timetable
-                <ArrowRight className="size-3.5" />
-              </button>
-            </form>
-          </section>
+              , colour-coded and clash-checked.
+            </h2>
 
-          {/* How it works */}
-          <section className="mt-16 sm:mt-20">
-            <div className="text-center">
-              <SectionLabel>How it works</SectionLabel>
-              <h2 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
-                Three steps to a clean week
-              </h2>
-            </div>
-            <ol className="mt-10 grid gap-8 sm:grid-cols-3 sm:gap-6">
-              {STEPS.map((step, i) => (
-                <li
-                  key={step.title}
-                  className={`relative animate-in fade-in slide-in-from-bottom-2 duration-700 fill-mode-both [animation-delay:${(i * 120 + 100).toFixed(0)}ms]`}
-                >
-                  <div className="flex items-center gap-3 sm:flex-col sm:items-start">
-                    <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/5 font-mono text-sm font-semibold text-primary">
-                      {String(i + 1).padStart(2, "0")}
-                    </span>
-                    <h3 className="text-sm font-semibold sm:mt-2">
-                      {step.title}
-                    </h3>
-                  </div>
-                  <p className="mt-2.5 max-w-xs text-sm text-muted-foreground">
-                    {step.desc}
+            <div className="mt-10 grid gap-5 lg:grid-cols-[1fr_auto_1fr] lg:gap-8 items-stretch">
+              {/* Source: the messy shared PDF */}
+              <SimulationPanel
+                label="Source — official timetable PDF · 52 sections on one sheet"
+                className="bg-muted/40"
+              >
+                <div className="font-mono text-[10.5px] leading-[1.9] text-muted-foreground overflow-x-auto">
+                  <p className="text-foreground/60">
+                    COMSATS University Islamabad · Dept. of Computer Science ·
+                    CS Time Table - Fall 2026 · dated 13-Sep-2026
                   </p>
-                </li>
-              ))}
-            </ol>
-          </section>
+                  {BCS3A_SOURCE_ROWS.map((r) => (
+                    <p key={r.raw}>{r.raw}</p>
+                  ))}
+                  <p className="text-muted-foreground/50">
+                    …41 more sections follow…
+                  </p>
+                </div>
+              </SimulationPanel>
 
-          {/* Tools */}
-          <section className="mt-16 grid gap-6 sm:mt-20 md:grid-cols-2">
-            <ToolCard
-              to="/classes"
-              step="01 · Class timetable"
-              icon={CalendarCheck2}
-              title="Build your weekly timetable"
-              desc="Add courses one by one, mix sections, and see clashes the moment they happen. The resolver suggests other sections that fit — handy on registration day."
+              <div className="flex lg:flex-col items-center justify-center text-muted-foreground/50">
+                <MoveRight className="size-5 max-lg:rotate-90" />
+              </div>
+
+              {/* Yours: extracted, deduped, colour-coded */}
+              <SimulationPanel
+                label="Your week — extracted · one section · zero noise"
+                className="bg-card shadow-md ring-1 ring-foreground/8"
+              >
+                <div className="space-y-3">
+                  {BCS3A_EXTRACTED.map((g, i) => (
+                    <div key={g.code}>
+                      <div className="flex items-baseline gap-2 border-b border-border pb-1">
+                        <span
+                          className="h-2.5 w-2.5 shrink-0 rounded-sm"
+                          style={{ background: ink(i) }}
+                        />
+                        <span className="font-mono text-[11px] font-bold">
+                          {g.code}
+                        </span>
+                        <span className="text-xs text-muted-foreground truncate">
+                          {g.title}
+                        </span>
+                      </div>
+                      {g.rows.map((r, k) => (
+                        <div
+                          key={r}
+                          className="flex gap-2 py-0.5 pl-[18px] font-mono text-[10.5px] tabular-nums text-muted-foreground odd:bg-muted/20"
+                        >
+                          <span className="text-foreground">{r}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </SimulationPanel>
+            </div>
+            <p className="mt-5 text-xs text-muted-foreground">
+              Real BCS-3A sessions from the built-in CS dataset ({CS_TT_VERSION}
+              ) — the same data the app loads, not a mockup.
+            </p>
+          </div>
+        </section>
+
+        {/* ─── The two tools, presented as registry sheets ──────────────── */}
+        <section className="border-t border-foreground/15">
+          <div className="mx-auto max-w-[1080px] px-4 py-16 sm:py-20 grid gap-14 md:grid-cols-2 md:gap-10">
+            <ToolBlock
+              n="01"
+              title="Build your weekly class timetable"
+              desc="Search codes, load a whole section in one click, or upload your department's PDF. Clashes are flagged on contact and the resolver suggests sections that actually fit your week. Print it or save it as PDF — the output looks like it came from the department."
               bullets={[
-                `CS built in · ${CS_TT_VERSION}`,
-                "Any department: upload the official PDF",
+                "CS built in",
+                "Any department by PDF upload",
                 "Move, edit or swap any class",
+                "Auto-resolver for clashes",
               ]}
+              to="/classes"
               cta="Start building"
               primary
             />
-            <ToolCard
-              to="/exams"
-              step="02 · Exams"
-              icon={FileText}
-              title="Personal exam schedule"
-              desc="Pick your program, semester and section — or upload your department's datesheet — and get exactly the exams you have to sit, with any scheduling clashes flagged."
+            <ToolBlock
+              n="02"
+              title="Generate your personal exam datesheet"
+              desc="Pick program, semester and section — or upload the official datesheet — and get exactly the exams you sit, rooms and all. Same-day exam clashes are flagged before you find out the hard way."
               bullets={[
                 "Repeater & custom picking",
                 "Exam clash warnings built in",
                 "Rooms, dates and instructors",
+                "Print-ready sheet",
               ]}
-              cta="Generate"
+              to="/exams"
+              cta="Generate my datesheet"
             />
-          </section>
+          </div>
+        </section>
 
-          {/* Beyond CS — everything the owner published, one tap away */}
-          {publishedDepts.length > 0 && (
-            <section className="mt-16 sm:mt-20">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <div>
-                  <SectionLabel>Beyond CS</SectionLabel>
-                  <h2 className="mt-2 text-xl font-semibold tracking-tight sm:text-2xl">
-                    Published schedules
-                  </h2>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {publishedDepts.length} department
-                  {publishedDepts.length === 1 ? "" : "s"} · live from the
-                  database
-                </p>
+        {/* ─── The registry, counted in real things ─────────────────────── */}
+        <section className="border-t border-foreground/15">
+          <div className="mx-auto max-w-[1080px] px-4 py-14 sm:py-16">
+            <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              The registry · {CS_TT_VERSION} · {CS_DATESHEET_VERSION}
+            </p>
+            <dl className="mt-8 grid gap-8 sm:grid-cols-3">
+              <div>
+                <dt className="text-4xl sm:text-5xl font-semibold tracking-tight tabular-nums">
+                  {mounted && generated !== null
+                    ? generated.toLocaleString()
+                    : "—"}
+                </dt>
+                <dd className="mt-2 font-mono text-[10.5px] uppercase tracking-[0.15em] text-muted-foreground border-t border-foreground/20 pt-2">
+                  Timetables generated so far
+                </dd>
               </div>
-              <div className="mt-5 flex flex-wrap gap-2">
-                {timetables.map((d) => (
-                  <Link
-                    key={`tt-${d.id}`}
-                    to="/classes"
-                    search={{ published: d.id }}
-                    className="rounded-full border border-border bg-card px-4 py-2 text-xs font-medium shadow-sm transition hover:border-primary/50 hover:bg-muted"
-                  >
-                    {d.departments?.name ?? d.title}
-                    <span className="ml-1.5 text-muted-foreground">
-                      · classes
-                    </span>
-                  </Link>
-                ))}
-                {datesheets.map((d) => (
-                  <Link
-                    key={`ds-${d.id}`}
-                    to="/exams"
-                    search={{ doc: d.id }}
-                    className="rounded-full border border-border bg-card px-4 py-2 text-xs font-medium shadow-sm transition hover:border-primary/50 hover:bg-muted"
-                  >
-                    {d.departments?.name ?? d.title}
-                    <span className="ml-1.5 text-muted-foreground">
-                      · exams
-                    </span>
-                  </Link>
-                ))}
+              <div>
+                <dt className="text-4xl sm:text-5xl font-semibold tracking-tight tabular-nums">
+                  {CS_SESSIONS.length}
+                </dt>
+                <dd className="mt-2 font-mono text-[10.5px] uppercase tracking-[0.15em] text-muted-foreground border-t border-foreground/20 pt-2">
+                  CS sessions verified &amp; built in
+                </dd>
               </div>
-            </section>
-          )}
+              <div>
+                <dt className="text-4xl sm:text-5xl font-semibold tracking-tight tabular-nums">
+                  {CS_DATESHEET_EXAMS.length}
+                </dt>
+                <dd className="mt-2 font-mono text-[10.5px] uppercase tracking-[0.15em] text-muted-foreground border-t border-foreground/20 pt-2">
+                  Exams on the built-in datesheet
+                </dd>
+              </div>
+            </dl>
+          </div>
+        </section>
 
-          {/* Closing CTA band */}
-          <section className="mt-16 pb-20 sm:mt-20 sm:pb-24">
-            <div className="relative overflow-hidden rounded-3xl border border-border bg-card px-6 py-12 text-center shadow-lg sm:px-12">
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-0"
-              >
-                <div className="absolute inset-0 dot-grid opacity-60 [mask-image:radial-gradient(ellipse_60%_60%_at_50%_40%,black,transparent)]" />
-                <div className="absolute -bottom-24 left-1/2 h-64 w-96 -translate-x-1/2 rounded-full bg-primary/10 blur-3xl" />
-              </div>
-              <div className="relative">
-                <Zap className="mx-auto size-5 text-primary" />
-                <h2 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
-                  Ready for a clash-free semester?
-                </h2>
-                <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-                  Takes about two minutes. No sign-up, no forms to print.
-                  {nextExam &&
-                    ` Next CS exam: ${fmtExam(nextExam.date)}${
-                      daysToExam > 0 ? ` — in ${daysToExam}` : ""
-                    }`}
-                </p>
-                <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-                  <Link
-                    to="/classes"
-                    className="group inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-3 text-sm font-medium text-primary-foreground shadow-sm transition hover:opacity-90"
+        {/* ─── Beyond CS: whatever the owner has published ─────────────── */}
+        {publishedDocs.length > 0 && (
+          <section className="border-t border-foreground/15">
+            <div className="mx-auto max-w-[1080px] px-4 py-14 sm:py-16">
+              <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Sheet 02 — published copies
+              </p>
+              <h2 className="mt-4 text-xl font-semibold tracking-tight sm:text-2xl">
+                Other departments, already parsed &amp; published
+              </h2>
+              <div className="mt-8 divide-y divide-border border-y border-border">
+                {publishedDocs.map((d, i) => (
+                  <div
+                    key={d.id}
+                    className="grid sm:grid-cols-[2rem_1fr_auto] items-baseline gap-2 sm:gap-4 py-3.5"
                   >
-                    <ListChecks className="size-4" /> Build my timetable
-                    <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
-                  </Link>
-                  <Link
-                    to="/exams"
-                    className="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-5 py-3 text-sm font-medium transition hover:bg-muted"
-                  >
-                    <FileText className="size-4" /> Exams
-                  </Link>
-                </div>
+                    <span className="font-mono text-[10.5px] text-muted-foreground tabular-nums">
+                      {String(i + 1).padStart(2, "0")}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold">
+                        {d.departments?.name ?? d.title}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        {d.title} · {d.version}
+                      </div>
+                    </div>
+                    <nav className="flex gap-5 text-xs font-medium whitespace-nowrap">
+                      {timetables.some((t) => t.id === d.id) && (
+                        <Link
+                          to="/classes"
+                          search={{ published: d.id }}
+                          className="text-foreground hover:text-primary underline decoration-foreground/30 underline-offset-4 transition"
+                        >
+                          classes →
+                        </Link>
+                      )}
+                      {datesheets.some((x) => x.id === d.id) && (
+                        <Link
+                          to="/exams"
+                          search={{ doc: d.id }}
+                          className="text-foreground hover:text-primary underline decoration-foreground/30 underline-offset-4 transition"
+                        >
+                          exams →
+                        </Link>
+                      )}
+                    </nav>
+                  </div>
+                ))}
               </div>
             </div>
           </section>
-        </div>
+        )}
+
+        {/* ─── Final call to action ─────────────────────────────────────── */}
+        <section className="border-t border-foreground/15">
+          <div className="mx-auto max-w-[1080px] px-4 py-20 sm:py-28">
+            <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              No account · no spreadsheets · nothing to print twice
+            </p>
+            <h2 className="mt-5 text-3xl font-semibold tracking-tight sm:text-4xl">
+              Pick your section. Two minutes. Done.
+            </h2>
+            <div className="mt-8 flex flex-wrap items-center gap-4">
+              <Link
+                to="/classes"
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+              >
+                Open my timetable
+                <ArrowRight className="size-4" />
+              </Link>
+              <Link
+                to="/exams"
+                className="text-sm font-medium text-foreground/80 hover:text-foreground transition"
+              >
+                Generate my datesheet
+              </Link>
+            </div>
+            <p className="mt-8 max-w-md text-xs text-muted-foreground">
+              CampusEase reads the official copy; it doesn't replace it. Always
+              double-check your final timetable against the department's last
+              word.
+            </p>
+          </div>
+        </section>
       </main>
     </div>
   );
 }
 
-const STEPS = [
-  {
-    title: "Pick your courses",
-    desc: "Choose your section or upload your department's official timetable PDF — CampusEase turns it into clean rows.",
-  },
-  {
-    title: "Let clashes resolve",
-    desc: "Overlaps are flagged instantly, and the auto-resolver suggests sections that actually fit your week.",
-  },
-  {
-    title: "Save, print, done",
-    desc: "Your personal class grid and exam datesheet, print-ready as PDF and saved for next time — no account.",
-  },
-] as const;
+/* ── Hero sheet: the phone view of /classes, rendered with real CS data ── */
 
-function ToolCard({
-  to,
-  step,
-  icon: Icon,
+function DaySheet({
+  sampleCls,
+  previewDay,
+  nowMin,
+  isWeekend,
+}: {
+  sampleCls: string;
+  previewDay: Day;
+  nowMin: number;
+  isWeekend: boolean;
+}) {
+  const sessions = useMemo(
+    () =>
+      CS_SESSIONS.filter(
+        (s) => s.cls === sampleCls && s.day === previewDay,
+      ).sort((a, b) => toMin(a.start) - toMin(b.start)),
+    [sampleCls, previewDay],
+  );
+  // Colour each course by first appearance, like the app's grid does.
+  const inkOfDay = useMemo(() => {
+    const seen: string[] = [];
+    const map = new Map<string, number>();
+    for (const s of CS_SESSIONS.filter((x) => x.cls === sampleCls)) {
+      if (!map.has(s.code)) map.set(s.code, seen.push(s.code) - 1);
+    }
+    return map;
+  }, [sampleCls]);
+
+  return (
+    <figure
+      className="rounded-lg border border-foreground/20 bg-card shadow-lg overflow-hidden"
+      aria-label={`Sample timetable for ${DAY_FULL[previewDay]}`}
+    >
+      {/* sheet head — the same double rule the printed PDF uses */}
+      <div className="border-b-2 border-foreground px-4 pt-3.5 pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              CS Time Table · {CS_TT_VERSION}
+            </div>
+            <div className="mt-1 text-base font-semibold tracking-tight">
+              {sampleCls} · {DAY_FULL[previewDay]}
+              {isWeekend && (
+                <span className="ml-2 font-mono text-[10px] font-medium text-muted-foreground">
+                  (quiet day)
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="text-right font-mono text-[9.5px] uppercase tracking-[0.15em] text-muted-foreground">
+            CampusEase
+            <div>phone view</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="divide-y divide-border">
+        {sessions.map((s) => {
+          const ongoing =
+            nowMin >= 0 && toMin(s.start) <= nowMin && nowMin < toMin(s.end);
+          const inkColor = ink(inkOfDay.get(s.code) ?? 4);
+          return (
+            <div
+              key={`${s.code}-${s.start}`}
+              className="flex gap-3 px-4 py-3 motion-safe:animate-in fade-in duration-500"
+              style={{
+                background: ongoing
+                  ? `color-mix(in oklab, ${inkColor} 12%, var(--card))`
+                  : undefined,
+                boxShadow: ongoing
+                  ? `inset 3px 0 0 ${inkColor}`
+                  : "inset 3px 0 0 transparent",
+              }}
+            >
+              <div className="w-[76px] shrink-0 font-mono text-[10.5px] pt-0.5 tabular-nums text-muted-foreground">
+                {fmt12(s.start)}–{fmt12(s.end)}
+                {s.kind === "lab" && (
+                  <div className="mt-1 inline-block rounded-sm border border-border bg-card px-1 text-[8.5px] font-semibold uppercase tracking-wide">
+                    Lab
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span
+                    className="font-mono text-[11px] font-bold tracking-tight"
+                    style={{ color: inkColor }}
+                  >
+                    {s.code}
+                  </span>
+                  {ongoing && (
+                    <span className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-destructive">
+                      <span className="size-1.5 animate-pulse rounded-full bg-destructive" />
+                      now
+                    </span>
+                  )}
+                </div>
+                <div className="text-[12.5px] font-semibold leading-snug">
+                  {s.title}
+                </div>
+                <div className="mt-0.5 text-[10.5px] text-muted-foreground truncate">
+                  {s.room || "Room TBA"} · {s.instructor}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {sessions.length === 0 && (
+          <p className="px-4 py-8 text-center text-xs text-muted-foreground">
+            No classes scheduled for this day.
+          </p>
+        )}
+      </div>
+
+      {/* sheet footer — the print signature */}
+      <figcaption className="border-t border-border bg-muted/40 px-4 py-2 flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.15em] text-muted-foreground">
+        <span>always double-check with the official copy</span>
+        <span>{CS_DATESHEET_EXAMS.length} exams · v1.0</span>
+      </figcaption>
+    </figure>
+  );
+}
+
+/* ── Tools: two editorial blocks, deliberately different ── */
+
+function ToolBlock({
+  n,
   title,
   desc,
   bullets,
+  to,
   cta,
   primary,
 }: {
-  to: "/classes" | "/exams";
-  step: string;
-  icon: typeof CalendarCheck2;
+  n: string;
   title: string;
   desc: string;
   bullets: string[];
+  to: "/classes" | "/exams";
   cta: string;
   primary?: boolean;
 }) {
   return (
-    <Link
-      to={to}
-      className="group relative block overflow-hidden rounded-2xl border border-border bg-card p-6 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-primary/40 hover:shadow-xl hover:shadow-primary/5 sm:p-7"
-    >
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute -right-16 -top-16 size-40 rounded-full bg-primary/5 blur-2xl transition-opacity opacity-0 group-hover:opacity-100"
-      />
-      <div className="relative flex items-center justify-between gap-3">
-        <SectionLabel>{step}</SectionLabel>
-        <span className="flex size-10 items-center justify-center rounded-xl border border-primary/20 bg-primary/5 text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
-          <Icon className="size-4.5" />
+    <article className="md:border-t-2 md:border-foreground md:pt-5">
+      <div className="flex items-baseline justify-between">
+        <span className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          Sheet {n}
         </span>
+        {primary && (
+          <span className="font-mono text-[9.5px] uppercase tracking-[0.15em] text-primary">
+            most used
+          </span>
+        )}
       </div>
-      <h2 className="relative mt-3 text-xl font-semibold tracking-tight">
+      <h3 className="mt-2 text-xl font-semibold tracking-tight sm:text-2xl lg:text-[1.7rem]">
         {title}
-      </h2>
-      <p className="relative mt-2 text-sm text-muted-foreground">{desc}</p>
-      <ul className="relative mt-4 space-y-1.5 text-xs text-muted-foreground">
-        {bullets.map((b) => (
-          <li key={b} className="flex gap-2">
+      </h3>
+      <p className="mt-3 text-sm text-muted-foreground leading-relaxed">
+        {desc}
+      </p>
+      <ul className="mt-5 space-y-1.5">
+        {bullets.map((b, i) => (
+          <li key={b} className="flex items-center gap-2.5 text-xs">
             <span
+              className="h-2 w-2 shrink-0 rounded-sm"
+              style={{ background: ink(i) }}
               aria-hidden="true"
-              className="mt-px font-semibold text-primary"
-            >
-              ✓
-            </span>
-            {b}
+            />
+            <span className="text-foreground/80">{b}</span>
           </li>
         ))}
       </ul>
-      <div className="relative mt-5 inline-flex items-center gap-1 text-sm font-medium text-foreground">
+      <Link
+        to={to}
+        className="group mt-6 inline-flex items-center gap-2 text-sm font-semibold text-foreground hover:text-primary transition"
+      >
         {cta}
-        <span className="rounded-md border border-input px-2.5 py-1 transition group-hover:bg-primary group-hover:text-primary-foreground">
-          <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
-        </span>
-      </div>
-    </Link>
+        <MoveRight className="size-4 transition-transform group-hover:translate-x-1" />
+      </Link>
+    </article>
   );
 }
+
+/* ── Simulation panels used in the "what changes" section ── */
+
+function SimulationPanel({
+  label,
+  className = "",
+  children,
+}: {
+  label: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className={`rounded-lg border border-border overflow-hidden flex flex-col ${className}`}
+    >
+      <div className="border-b border-border px-4 py-2 flex items-center justify-between gap-2">
+        <span className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">
+          {label}
+        </span>
+        <span className="flex gap-1" aria-hidden="true">
+          <span className="size-2 rounded-full bg-foreground/15" />
+          <span className="size-2 rounded-full bg-foreground/15" />
+        </span>
+      </div>
+      <div className="p-4 min-w-0">{children}</div>
+    </div>
+  );
+}
+
+/** The "source PDF" parody: real CS rows, just badly formatted — one column
+ *  dump of several sections, exactly how the official sheet actually reads. */
+const BCS3A_SOURCE_ROWS = (() => {
+  const codes = new Map<string, string>();
+  for (const s of CS_SESSIONS)
+    if (!codes.has(s.code)) codes.set(s.code, s.title);
+  const pick = (cls: string, code: string) =>
+    CS_SESSIONS.filter((s) => s.cls === cls && s.code === code)[0];
+  const line = (s: ClassSession | undefined, extra = "") =>
+    s
+      ? `${s.cls}  ${s.code}  ${codes.get(s.code) || s.title}  ${s.day} ${s.start}-${s.end}   ${s.room || "TBA"}${extra}`
+      : "";
+  const lines = [
+    line(pick("BCS-3A", "CSC211")),
+    line(
+      CS_SESSIONS.find(
+        (s) => s.cls === "BCS-3A" && s.code === "CSC211" && s.kind === "lab",
+      ),
+      "  (Lab)",
+    ),
+    line(pick("BCS-3A", "CSC270")),
+    line(pick("BCS-3B", "CSC102"), "  ← different section"),
+    line(pick("BCS-3A", "CSC291")),
+    line(pick("BCS-2A", "BIO310"), "  ← DIFFERENT SECTION"),
+  ].filter(Boolean);
+  return lines.map((raw) => ({ raw }));
+})();
+
+/** The "extracted" panel: every row is generated from the real dataset,
+ *  deduped by day+time just like the app does — never hand-typed. */
+const BCS3A_EXTRACTED = (() => {
+  const out: { code: string; title: string; rows: string[] }[] = [];
+  for (const s of CS_SESSIONS.filter((x) => x.cls === "BCS-3A")) {
+    let g = out.find((o) => o.code === s.code);
+    if (!g) {
+      g = { code: s.code, title: s.title, rows: [] };
+      out.push(g);
+    }
+    if (g.rows.every((r) => !r.startsWith(`${s.day} ${s.start}`)))
+      g.rows.push(
+        `${s.day} ${s.start}–${s.end} · ${s.room || "TBA"}${s.kind === "lab" ? " (Lab)" : ""}`,
+      );
+  }
+  return out.slice(0, 3);
+})();

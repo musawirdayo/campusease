@@ -154,15 +154,6 @@
   --course-8: oklch(0.75 0.04 260);
 }
 
-/* Faint dot grid used behind the landing hero + closing CTA band */
-.dot-grid {
-  background-image: radial-gradient(
-    color-mix(in oklab, var(--foreground) 8%, transparent) 1px,
-    transparent 1px
-  );
-  background-size: 22px 22px;
-}
-
 .tt-free {
   background-image: repeating-linear-gradient(
     135deg,
