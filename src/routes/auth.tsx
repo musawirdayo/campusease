@@ -28,6 +28,13 @@ export const Route = createFileRoute("/auth")({
   component: AuthPage,
 });
 
+// Must match the email in the signup trigger (supabase/setup.sql §3).
+// Server behavior is enforced by the trigger itself; this constant keeps the
+// public form from even trying to register other emails.
+const OWNER_EMAIL =
+  (import.meta.env.VITE_OWNER_EMAIL as string | undefined)?.trim() ||
+  "abdulmusawirdayo35@gmail.com";
+
 function AuthPage() {
   const navigate = useNavigate();
   const { redirect } = Route.useSearch();
@@ -38,6 +45,12 @@ function AuthPage() {
   const [busy, setBusy] = useState(false);
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (mode === "create" && email.trim().toLowerCase() !== OWNER_EMAIL) {
+      setMessage(
+        "Sign-ups are restricted to the site owner. Use the owner email, or sign in if you already have an account.",
+      );
+      return;
+    }
     setBusy(true);
     setMessage("");
     const result =

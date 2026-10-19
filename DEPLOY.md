@@ -60,6 +60,17 @@ role** — see §3 above and `supabase/setup.sql` step 6. To reach it:
    delete any schedule document), `/admin/settings` (AI parser config) and
    `/admin/messages` (contact inbox).
 
+   Nobody else can get admin rights: `user_roles` has RLS with no write
+   policies (self-grants are impossible even via direct API calls) and every
+   admin server function re-checks the role server-side. The one thing left
+   to close yourself, after your owner account works:
+
+   - Supabase dashboard → Authentication → Providers → Email → turn OFF
+     **"Allow new users to sign up"** (only you ever need an account).
+   - Run [`supabase/lock-admin-access.sql`](./supabase/lock-admin-access.sql)
+     once — it deletes any admin rows that aren't yours and locks the roles
+     table down further.
+
 If the deployed site shows "Page not found" for any route that works locally,
 check the Vercel dashboard that the *latest* deployment built from the current
 commit — stale deployments from before new routes existed return 404s.
