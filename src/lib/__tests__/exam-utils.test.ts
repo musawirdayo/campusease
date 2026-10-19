@@ -3,6 +3,8 @@ import {
   auditExams,
   examsOverlap,
   findExamClashes,
+  findSharedSlots,
+  isSharedSlot,
   normalDate,
   normalSlot,
   examRange,
@@ -71,6 +73,50 @@ describe("exam-utils", () => {
       "CSC262",
       "CSC462",
     ]);
+  });
+
+  describe("shared slots — one paper under two codes", () => {
+    // Real v1 pattern: BAI-4A "Artificial Intelligence" sits as CSC262 (current
+    // students) and CSC462 (repeaters) in the same room, same instructor.
+    const ai = (code: string, prog = "BAI", sec = "A") => ({
+      ...exam("2026-11-02", "08:30-09:50", code, prog, 4, sec),
+      course: "Artificial Intelligence",
+      rooms: ["G-08"],
+      instructor: "Umar Nauman",
+    });
+
+    it("recognises same class + same course title + one slot as shared", () => {
+      expect(isSharedSlot(ai("CSC262"), ai("CSC462"))).toBe(true);
+      // different class → not shared (another cohort's own exam)
+      expect(isSharedSlot(ai("CSC262"), ai("CSC462", "BAI", "B"))).toBe(false);
+      // different course title → a genuine overlap candidate
+      const other = { ...ai("CSC462"), course: "Theory of Computation" };
+      expect(isSharedSlot(ai("CSC262"), other)).toBe(false);
+      // non-overlapping slot → not shared
+      const later = { ...ai("CSC462"), time: "10:00-11:20" };
+      expect(isSharedSlot(ai("CSC262"), later)).toBe(false);
+    });
+
+    it("is NOT a clash — personal sheets skip shared pairs", () => {
+      const list = [ai("CSC262"), ai("CSC462")];
+      expect(findExamClashes(list)).toEqual([]);
+      expect(findSharedSlots(list)).toHaveLength(1);
+    });
+
+    it("audit reports shared slots separately from clashes", () => {
+      const issues = auditExams([ai("CSC262"), ai("CSC462")]);
+      expect(issues.filter((i) => i.type === "clash")).toHaveLength(0);
+      const shared = issues.filter((i) => i.type === "shared-slot");
+      expect(shared).toHaveLength(1);
+      expect(shared[0].message).toContain("CSC262");
+      expect(shared[0].message).toContain("CSC462");
+    });
+
+    it("keeps red clashes when the titles differ despite codes", () => {
+      const other = { ...ai("CSC462"), course: "Theory of Computation" };
+      const clashes = findExamClashes([ai("CSC262"), other]);
+      expect(clashes).toHaveLength(1);
+    });
   });
 
   it("normalizes dates in both common formats", () => {

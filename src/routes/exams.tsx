@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { Exam } from "@/lib/types";
 import { normalDate, normalSlot, uniqueExams } from "@/lib/exam-utils";
-import { findExamClashes } from "@/lib/exam-utils";
+import { findExamClashes, findSharedSlots } from "@/lib/exam-utils";
 import { useSaved } from "@/lib/student-schedules";
 import { AppNav } from "@/components/AppNav";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
@@ -924,34 +924,59 @@ function Stats({ generated, loaded }: { generated: number; loaded: number }) {
 
 function ClashBanner({
   clashes,
+  exams,
 }: {
   clashes: ReturnType<typeof findExamClashes>;
+  exams: Exam[];
 }) {
-  if (!clashes.length) return null;
+  const shared = findSharedSlots(exams);
+  if (!clashes.length && !shared.length) return null;
+  const list = (pairs: ReturnType<typeof findSharedSlots>) => (
+    <ul className="list-disc ml-4 mt-1 text-xs space-y-0.5">
+      {pairs.map((c, i) => (
+        <li key={i}>
+          <strong>{dayLabel(c.date)}</strong>: {c.a.code} (
+          {format12Hour(c.a.time)}) ↔ {c.b.code} ({format12Hour(c.b.time)})
+          {c.a.prog && c.b.prog
+            ? ` · ${c.a.prog}${c.a.sem}-${c.a.sec || ""}`
+            : ""}
+        </li>
+      ))}
+    </ul>
+  );
   return (
-    <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 mb-4 text-sm text-destructive">
-      <div className="font-semibold flex items-center gap-2">
-        <span>
-          ⚠ {clashes.length} exam clash{clashes.length === 1 ? "" : "es"} in
-          this datesheet
-        </span>
-      </div>
-      <ul className="list-disc ml-4 mt-1 text-xs space-y-0.5">
-        {clashes.map((c, i) => (
-          <li key={i}>
-            <strong>{dayLabel(c.date)}</strong>: {c.a.code} (
-            {format12Hour(c.a.time)}) ↔ {c.b.code} ({format12Hour(c.b.time)})
-            {c.a.prog && c.b.prog
-              ? ` · ${c.a.prog}${c.a.sem}-${c.a.sec || ""}`
-              : ""}
-          </li>
-        ))}
-      </ul>
-      <p className="mt-1.5 text-[11px] opacity-80">
-        These courses are scheduled at overlapping times. Contact your
-        department — v1 datesheets often get corrected in v2.
-      </p>
-    </div>
+    <>
+      {clashes.length > 0 && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 mb-4 text-sm text-destructive">
+          <div className="font-semibold flex items-center gap-2">
+            <span>
+              ⚠ {clashes.length} exam clash{clashes.length === 1 ? "" : "es"} in
+              this datesheet
+            </span>
+          </div>
+          {list(clashes)}
+          <p className="mt-1.5 text-[11px] opacity-80">
+            These courses are scheduled at overlapping times. Contact your
+            department — v1 datesheets often get corrected in v2.
+          </p>
+        </div>
+      )}
+      {shared.length > 0 && (
+        <div className="rounded-md border border-primary/40 bg-primary/5 p-3 mb-4 text-sm text-primary">
+          <div className="font-semibold">
+            One paper, two codes — {shared.length} shared slot
+            {shared.length === 1 ? "" : "s"}
+          </div>
+          {list(shared)}
+          <p className="mt-1.5 text-[11px] opacity-80">
+            The department runs one exam session listed under two registered
+            codes (e.g. current students and repeaters), often sharing a room.
+            You sit the code you registered for — no conflict, and no need to
+            contact anyone.
+          </p>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -1016,7 +1041,7 @@ function ResultBlock({
           Print / Save PDF
         </button>
       </div>
-      <ClashBanner clashes={clashes} />
+      <ClashBanner clashes={clashes} exams={matches} />
       <div className="-mx-2 hidden overflow-x-auto sm:block print:block print:mx-0 print:overflow-visible">
         <table className="w-full text-sm">
           <thead>

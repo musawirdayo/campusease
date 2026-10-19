@@ -20,6 +20,26 @@ export function examsOverlap(a: Exam, b: Exam): boolean {
   return ra[0] < rb[1] && rb[0] < ra[1];
 }
 
+/** The same class sitting the same paper under two codes in one slot —
+ *  typically one shared session listed per catalog code (e.g. current
+ *  CSC262 students and repeaters registered under CSC462, same course title,
+ *  same instructor, often the same room). Not a clash: each student sits one
+ *  paper. */
+export function isSharedSlot(a: Exam, b: Exam): boolean {
+  if (a.date !== b.date || a.code === b.code) return false;
+  const ra = examRange(a.time);
+  const rb = examRange(b.time);
+  if (!ra || !rb) return false;
+  const overlapping = ra[0] < rb[1] && rb[0] < ra[1];
+  if (!overlapping) return false;
+  return (
+    a.prog === b.prog &&
+    a.sem === b.sem &&
+    a.sec === b.sec &&
+    a.course.trim().toLowerCase() === b.course.trim().toLowerCase()
+  );
+}
+
 export type ExamClash = {
   date: string;
   a: Exam;
@@ -27,15 +47,37 @@ export type ExamClash = {
 };
 
 /**
- * Clashes within a student's personal datesheet: two DIFFERENT courses that
- * run at overlapping times on the same day (e.g. the v1 datesheet error of
- * BAI-4A sitting CSC262 and CSC462 in the same slot).
+ * Genuine clashes within a student's personal datesheet: two DIFFERENT
+ * courses (different code AND different title) for one class that run at
+ * overlapping times on the same day — e.g. the v1 datesheet mistake of
+ * scheduling Discrete Structures against Statistics for BCS-2A.
+ *
+ * The same paper under two codes (CSC262 + CSC462 for BCS-4A "Artificial
+ * Intelligence") is NOT a clash — see isSharedSlot — and is filtered out.
  */
 export function findExamClashes(exams: Exam[]): ExamClash[] {
   const out: ExamClash[] = [];
   for (let i = 0; i < exams.length; i++) {
     for (let j = i + 1; j < exams.length; j++) {
+      if (isSharedSlot(exams[i], exams[j])) continue;
       if (examsOverlap(exams[i], exams[j]))
+        out.push({ date: exams[i].date, a: exams[i], b: exams[j] });
+    }
+  }
+  return out.sort(
+    (c) => c.a.date.localeCompare(c.b.date) || c.a.time.localeCompare(c.b.time),
+  );
+}
+
+export type SharedSlot = { date: string; a: Exam; b: Exam };
+
+/** Same class + same course title under two codes in one slot. Shown as a
+ *  neutral "one paper, registered codes" note, never as a clash. */
+export function findSharedSlots(exams: Exam[]): SharedSlot[] {
+  const out: SharedSlot[] = [];
+  for (let i = 0; i < exams.length; i++) {
+    for (let j = i + 1; j < exams.length; j++) {
+      if (isSharedSlot(exams[i], exams[j]))
         out.push({ date: exams[i].date, a: exams[i], b: exams[j] });
     }
   }
@@ -75,7 +117,12 @@ export function uniqueExams(arr: Exam[]): Exam[] {
 }
 
 export type ExamIssue = {
-  type: "duplicate" | "missing-field" | "clash" | "same-exam-different-slot";
+  type:
+    | "duplicate"
+    | "missing-field"
+    | "clash"
+    | "same-exam-different-slot"
+    | "shared-slot";
   message: string;
   /** course codes / row keys involved, for review-table cross-reference */
   rows: string[];
@@ -153,11 +200,18 @@ export function auditExams(all: Exam[]): ExamIssue[] {
       });
   }
 
-  // clashes last — they are expected in v1 sheets and get their own banner
+  // clashes last — genuine ones warn; known shared-code slots get a neutral
+  // review line instead of a false alarm
   for (const c of findExamClashes(all))
     issues.push({
       type: "clash",
       message: `${c.date}: ${c.a.code} (${c.a.time}) ↔ ${c.b.code} (${c.b.time}) for ${c.a.prog}${c.a.sem}${c.a.sec ? "-" + c.a.sec : ""}`,
+      rows: [examRowKey(c.a), examRowKey(c.b)],
+    });
+  for (const c of findSharedSlots(all))
+    issues.push({
+      type: "shared-slot",
+      message: `${c.date}: ${c.a.code} + ${c.b.code} (${c.a.time}) share one slot for ${c.a.prog}${c.a.sem}${c.a.sec ? "-" + c.a.sec : ""} — likely the same paper under two registered codes, confirm before publishing`,
       rows: [examRowKey(c.a), examRowKey(c.b)],
     });
 

@@ -458,11 +458,16 @@ function PublisherPage() {
     [examRows],
   );
   const hardIssues = useMemo(
-    () => examIssues.filter((i) => i.type !== "clash"),
+    () =>
+      examIssues.filter((i) => i.type !== "clash" && i.type !== "shared-slot"),
     [examIssues],
   );
   const clashes = useMemo(
     () => examIssues.filter((i) => i.type === "clash"),
+    [examIssues],
+  );
+  const sharedSlots = useMemo(
+    () => examIssues.filter((i) => i.type === "shared-slot"),
     [examIssues],
   );
 
@@ -778,9 +783,12 @@ function PublisherPage() {
                 }`}
               >
                 <div className="font-semibold">
-                  ⚠ {hardIssues.length + clashes.length} consistency issue
-                  {hardIssues.length + clashes.length === 1 ? "" : "s"} in these
-                  rows
+                  ⚠ {hardIssues.length + clashes.length + sharedSlots.length}{" "}
+                  consistency issue
+                  {hardIssues.length + clashes.length + sharedSlots.length === 1
+                    ? ""
+                    : "s"}{" "}
+                  in these rows
                 </div>
                 <ul className="mt-1 list-disc space-y-0.5 pl-4">
                   {hardIssues.slice(0, 12).map((issue, i) => (
@@ -801,11 +809,22 @@ function PublisherPage() {
                     </li>
                   ))}
                   {clashes.length > 8 && <li>+ {clashes.length - 8} more…</li>}
+                  {sharedSlots.slice(0, 8).map((issue, i) => (
+                    <li key={`s${i}`}>
+                      <span className="font-medium">Shared slot:</span>{" "}
+                      {issue.message}
+                    </li>
+                  ))}
+                  {sharedSlots.length > 8 && (
+                    <li>+ {sharedSlots.length - 8} more…</li>
+                  )}
                 </ul>
                 <p className="mt-1 opacity-80">
                   {hardIssues.length
                     ? "Fix duplicates and unreadable rows above before publishing."
-                    : "Clashes are the real v1 schedule — publish anyway if genuine."}
+                    : clashes.length
+                      ? "Clashes are the real v1 schedule — publish anyway if genuine."
+                      : "Shared slots are one paper listed under two registered codes (e.g. repeaters) — fine to publish when the codes match your rows."}
                 </p>
               </div>
             )}
