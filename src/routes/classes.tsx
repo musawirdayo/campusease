@@ -839,7 +839,7 @@ function ClassesPage() {
                             key={s.sid}
                             className={`flex gap-3 rounded-md border px-3 py-2 mb-1 text-sm ${clashSids.has(s.sid) ? "border-destructive bg-destructive/10" : "border-border"}`}
                           >
-                            <div className="w-36 font-mono text-xs">
+                            <div className="w-28 shrink-0 font-mono text-xs sm:w-36">
                               {fmt12(s.start)} – {fmt12(s.end)}
                             </div>
                             <div className="flex-1">

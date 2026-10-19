@@ -841,7 +841,7 @@ function Step({ n, cur, label }: { n: number; cur: number; label: string }) {
 
 function Stats({ generated, loaded }: { generated: number; loaded: number }) {
   const Item = ({ v, l }: { v: React.ReactNode; l: string }) => (
-    <div className="bg-card border border-border rounded-lg px-4 py-3">
+    <div className="bg-card border border-border rounded-lg px-3 py-3 sm:px-4">
       <div className="text-lg font-semibold">{v}</div>
       <div className="text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">
         {l}
@@ -849,10 +849,10 @@ function Stats({ generated, loaded }: { generated: number; loaded: number }) {
     </div>
   );
   return (
-    <div className="grid grid-cols-3 gap-3 mb-4">
+    <div className="grid grid-cols-3 gap-2 mb-4 sm:gap-3">
       <Item v={generated.toLocaleString()} l="Timetables generated" />
       <Item v="AI + rules" l="Parser mode" />
-      <Item v={loaded ? "Loaded" : "—"} l="Datasheet" />
+      <Item v={loaded ? "Loaded" : "—"} l="Datesheet" />
     </div>
   );
 }
@@ -928,7 +928,7 @@ function ResultBlock({
   }
   return (
     <div
-      className="bg-card border border-border rounded-lg p-5 mb-4 shadow-sm"
+      className="bg-card border border-border rounded-lg p-4 mb-4 shadow-sm sm:p-5"
       id={id}
     >
       {hasRestored && (
@@ -952,7 +952,7 @@ function ResultBlock({
         </button>
       </div>
       <ClashBanner clashes={clashes} />
-      <div className="overflow-x-auto -mx-2">
+      <div className="-mx-2 hidden overflow-x-auto sm:block print:block print:mx-0 print:overflow-visible">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-[11px] uppercase tracking-wider text-muted-foreground border-b border-border">
@@ -1019,6 +1019,59 @@ function ResultBlock({
             })}
           </tbody>
         </table>
+      </div>
+
+      {/* Phones: the same rows as stacked cards — no sideways scrolling */}
+      <div className="space-y-2 sm:hidden">
+        {matches.map((e, i) => {
+          const clashed = clashes.some((c) => DateAffects(c, e));
+          const diff = Math.ceil(
+            (new Date(e.date + "T00:00:00").getTime() - today.getTime()) /
+              86400000,
+          );
+          return (
+            <div
+              key={i}
+              className={`rounded-md border px-3 py-2.5 ${clashed ? "border-destructive/40 bg-destructive/5" : "border-border"}`}
+            >
+              <div className="flex flex-wrap items-center gap-1.5">
+                <div className="font-medium">{dayLabel(e.date)}</div>
+                {diff > 0 && (
+                  <span className="text-[11px] text-amber-600">
+                    {diff} day{diff === 1 ? "" : "s"} away
+                  </span>
+                )}
+                {diff === 0 && (
+                  <span className="text-[11px] text-emerald-600">Today</span>
+                )}
+                <span className="ml-auto inline-block bg-primary/10 text-primary rounded px-2 py-0.5 text-xs font-mono">
+                  {format12Hour(e.time)}
+                </span>
+              </div>
+              <div className="mt-1 text-sm font-medium">
+                {e.code} · {e.course}
+                {clashed && (
+                  <span className="ml-2 text-[11px] font-semibold text-destructive">
+                    Clash
+                  </span>
+                )}
+              </div>
+              <div className="mt-0.5 text-xs text-muted-foreground">
+                {e.instructor}
+              </div>
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {e.rooms.map((r, j) => (
+                  <span
+                    key={j}
+                    className="pill inline-block bg-muted text-foreground/80 rounded px-1.5 py-0.5 text-[11px] font-mono"
+                  >
+                    {r}
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

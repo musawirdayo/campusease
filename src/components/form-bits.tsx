@@ -21,7 +21,7 @@ export function SectionCard({
 }) {
   return (
     <section
-      className={`bg-card border border-border rounded-lg p-5 shadow-sm ${className}`}
+      className={`bg-card border border-border rounded-lg p-4 shadow-sm sm:p-5 ${className}`}
     >
       {label != null && (
         <div className="mb-3">
