@@ -14,6 +14,13 @@ import {
 import { useSaved } from "@/lib/student-schedules";
 import { WeekGrid } from "@/components/WeekGrid";
 import {
+  coursesWeek,
+  loadExamDataset,
+  lookupStudent,
+  normalizeReg,
+  type StudentRec,
+} from "@/lib/exam-data";
+import {
   usePublishedTimetables,
   timetableRowsToSessions,
 } from "@/lib/published";
@@ -98,6 +105,11 @@ function ClassesPage() {
   const [generated, setGenerated] = useState(0);
   const deepSectionRef = useRef(false);
   const deepPubRef = useRef(false);
+  const deepRegRef = useRef(false);
+  // Roll-number quick start: input + status of the last attempt
+  const [regInput, setRegInput] = useState("");
+  const [regBusy, setRegBusy] = useState(false);
+  const [regMsg, setRegMsg] = useState<string | null>(null); // null = ok, string = error
   const {
     data: bundle,
     setData: setBundle,
@@ -242,6 +254,66 @@ function ClassesPage() {
       })
       .catch(() => {});
   }
+
+  async function loadByReg(input: string) {
+    setRegMsg(null);
+    const core = normalizeReg(input);
+    if (!core) {
+      setRegMsg(
+        "That doesn't look like a roll number — try FA25-BCS-065 (batch, program, 3-digit roll).",
+      );
+      return;
+    }
+    setRegBusy(true);
+    try {
+      const ds = await loadExamDataset();
+      const lookup = lookupStudent(ds, core);
+      if (lookup.kind !== "found") {
+        setRegMsg(
+          lookup.kind === "invalid"
+            ? "That doesn't look like a roll number — try FA25-BCS-065."
+            : `${lookup.reg} has no seat in the seating plan — check the batch, program and roll.`,
+        );
+        return;
+      }
+      const student: StudentRec = lookup.student;
+      const { picks: built, missing } = await coursesWeek(student.papers);
+      setPicks(built);
+      setSrc("cs");
+      setCustom(null);
+      setPublishedId("");
+      const n = built.reduce((sum, p) => sum + p.sessions.length, 0);
+      if (built.length === 0) {
+        setRegMsg(
+          `${student.name} (${student.core}) has ${missing.length} course(s) this term, but none of them run in the published weekly timetable yet.`,
+        );
+        return;
+      }
+      toast.success(`${student.core} — ${built.length} courses loaded`, {
+        description: `${n} sessions${missing.length ? ` · ${missing.length} course(s) not in this term's timetable: ${missing.map((m) => m.code).join(", ")}` : ""}`,
+      });
+      setRegInput("");
+      document
+        .getElementById("timetable-card")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (e) {
+      setRegMsg(e instanceof Error ? e.message : "Could not load the dataset");
+    } finally {
+      setRegBusy(false);
+    }
+  }
+
+  // One-click deep link: /classes?reg=FA25-BCS-065 loads that student's own
+  // course combination (per course — never a section roster).
+  useEffect(() => {
+    if (deepRegRef.current) return;
+    const deepReg = new URLSearchParams(window.location.search)
+      .get("reg")
+      ?.trim();
+    if (!deepReg) return;
+    deepRegRef.current = true;
+    void loadByReg(deepReg);
+  }, []);
 
   async function upload(f: File) {
     setErr("");
@@ -571,6 +643,49 @@ function ClassesPage() {
                   </p>
                 </div>
               )}
+            </SectionCard>
+
+            <SectionCard label="Quick start — load your courses by roll number">
+              <form
+                className="flex flex-col gap-2 sm:flex-row"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!regBusy) void loadByReg(regInput);
+                }}
+              >
+                <TextInput
+                  value={regInput}
+                  onChange={(e) => setRegInput(e.target.value)}
+                  placeholder="FA25-BCS-065"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  disabled={regBusy}
+                  className="font-mono uppercase"
+                  style={{ textTransform: "uppercase" }}
+                  aria-label="Roll number"
+                />
+                <PrimaryButton
+                  type="submit"
+                  disabled={regBusy || !regInput.trim()}
+                  className="sm:w-auto shrink-0"
+                >
+                  {regBusy ? "Loading…" : "Load my courses"}
+                </PrimaryButton>
+              </form>
+              {regBusy && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Fetching the seating plan…
+                </p>
+              )}
+              {regMsg && (
+                <p className="mt-2 text-xs text-destructive">{regMsg}</p>
+              )}
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Loads THIS student's exact combination — every course is
+                resolved by its own class from the official seating plan, so
+                improved or dropped courses don't drag in a whole section's
+                roster. Section loading below loads every course of a class.
+              </p>
             </SectionCard>
 
             <SectionCard label="Step 2 — Quick start: your section's full timetable">

@@ -55,6 +55,7 @@ function Landing() {
   const [generated, setGenerated] = useState<number | null>(null);
   const navigate = useNavigate();
   const [quickSection, setQuickSection] = useState("");
+  const [quickReg, setQuickReg] = useState("");
 
   useEffect(() => {
     setMounted(true);
@@ -134,12 +135,16 @@ function Landing() {
               <p className="mt-6 max-w-md text-base text-muted-foreground sm:text-lg">
                 Computer Science is{" "}
                 <span className="text-foreground font-medium">built in</span> —
-                pick your section and you're done. Other departments: upload the
-                official timetable or datesheet PDF once, and get{" "}
+                type your roll number and everything is already seated: your
+                weekly classes{" "}
+                <span className="text-foreground font-medium">and</span> an exam
+                profile from{" "}
                 <span className="text-foreground font-medium">
-                  your personal, clash-checked schedule
-                </span>{" "}
-                for classes and exams. No sign-up, nothing to install.
+                  the official seating plan
+                </span>
+                , rooms and seats included. Other departments: upload the
+                official timetable or datesheet PDF once. No sign-up, nothing to
+                install.
               </p>
 
               <div className="mt-8 flex flex-wrap items-center gap-3">
@@ -154,45 +159,84 @@ function Landing() {
                   to="/exams"
                   className="group inline-flex items-center gap-1.5 text-sm font-medium text-foreground/80 transition hover:text-foreground"
                 >
-                  Generate my datesheet
+                  Open my exam profile
                   <MoveRight className="size-4 transition-transform group-hover:translate-x-0.5" />
                 </Link>
               </div>
 
-              {/* Quick start — pick a section, land in the builder */}
+              {/* Quick start — pick a section, or type a roll number */}
               <form
                 onSubmit={(e) => e.preventDefault()}
-                className="mt-10 max-w-md border-y border-foreground/15 py-4 flex flex-wrap items-center gap-2.5"
+                className="mt-10 max-w-md space-y-3 border-y border-foreground/15 py-4"
               >
-                <span className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.18em] text-muted-foreground shrink-0">
-                  CS section
-                </span>
-                <select
-                  value={quickSection}
-                  onChange={(e) => setQuickSection(e.target.value)}
-                  aria-label="Which section are you in?"
-                  className="min-w-0 flex-1 rounded-md border border-input bg-background px-2.5 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="">Pick your section…</option>
-                  {CS_CLASSES.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label} · {c.batch}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  disabled={!quickSection}
-                  onClick={() =>
-                    navigate({
-                      to: "/classes",
-                      search: { section: quickSection },
-                    })
-                  }
-                  className="shrink-0 rounded-md bg-primary px-4 py-2 text-xs font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
-                >
-                  Load it
-                </button>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <span className="shrink-0 font-mono text-[9.5px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    CS section
+                  </span>
+                  <select
+                    value={quickSection}
+                    onChange={(e) => setQuickSection(e.target.value)}
+                    aria-label="Which section are you in?"
+                    className="min-w-0 flex-1 rounded-md border border-input bg-background px-2.5 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="">Pick your section…</option>
+                    {CS_CLASSES.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.label} · {c.batch}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={!quickSection}
+                    onClick={() =>
+                      navigate({
+                        to: "/classes",
+                        search: { section: quickSection },
+                      })
+                    }
+                    className="shrink-0 rounded-md bg-primary px-4 py-2 text-xs font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
+                  >
+                    Load it
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <span className="shrink-0 font-mono text-[9.5px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    Roll no.
+                  </span>
+                  <input
+                    value={quickReg}
+                    onChange={(e) => setQuickReg(e.target.value.toUpperCase())}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && quickReg.trim().length >= 4) {
+                        e.preventDefault();
+                        navigate({
+                          to: "/exams",
+                          search: { reg: quickReg.trim() },
+                        });
+                      }
+                    }}
+                    placeholder="FA25-BCS-065"
+                    spellCheck={false}
+                    autoCorrect="off"
+                    data-1p-ignore
+                    aria-label="Your registration number"
+                    className="min-w-0 flex-1 rounded-md border border-input bg-background px-2.5 py-2 font-mono text-xs tracking-wide focus:outline-none focus:ring-2 focus:ring-ring"
+                  />
+                  <button
+                    type="button"
+                    disabled={quickReg.trim().length < 4}
+                    onClick={() =>
+                      navigate({
+                        to: "/exams",
+                        search: { reg: quickReg.trim() },
+                      })
+                    }
+                    className="shrink-0 rounded-md bg-primary px-4 py-2 text-xs font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
+                  >
+                    Open my exams
+                  </button>
+                </div>
               </form>
 
               {/* Live department pulse — real data only */}
@@ -339,16 +383,16 @@ function Landing() {
             />
             <ToolBlock
               n="02"
-              title="Generate your personal exam datesheet"
-              desc="Pick program, semester and section — or upload the official datesheet — and get exactly the exams you sit, rooms and all. Same-day exam clashes are flagged before you find out the hard way."
+              title="Open your exam profile by roll number"
+              desc="Type any registration number — every paper you sit, with the exact room and seat, resolved straight from the official seating plan (2,500+ students, built in). Clash-room papers show the real window they're sat in, and the datesheet prints in the department's own format."
               bullets={[
-                "Repeater & custom picking",
-                "Exam clash warnings built in",
-                "Rooms, dates and instructors",
-                "Print-ready sheet",
+                "Any roll number works",
+                "Exact room & seat per paper",
+                "Clash-room windows decoded",
+                "Print-ready official-format sheet",
               ]}
               to="/exams"
-              cta="Generate my datesheet"
+              cta="Find my exams"
             />
           </div>
         </section>
@@ -451,7 +495,7 @@ function Landing() {
               No account · no spreadsheets · nothing to print twice
             </p>
             <h2 className="mt-5 text-3xl font-semibold tracking-tight sm:text-4xl">
-              Pick your section. Two minutes. Done.
+              Type your roll number. That's all it takes.
             </h2>
             <div className="mt-8 flex flex-wrap items-center gap-4">
               <Link
@@ -465,7 +509,7 @@ function Landing() {
                 to="/exams"
                 className="text-sm font-medium text-foreground/80 hover:text-foreground transition"
               >
-                Generate my datesheet
+                Open my exam profile
               </Link>
             </div>
             <p className="mt-8 max-w-md text-xs text-muted-foreground">

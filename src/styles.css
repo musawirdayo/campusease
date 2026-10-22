@@ -178,17 +178,28 @@
   body * {
     visibility: hidden;
   }
+  /* Only these subtrees print: the weekly class grid (.tt-print) and the
+     dedicated exam-datesheet document (.exam-print, in exams.tsx) */
   .tt-print,
-  .tt-print * {
+  .tt-print *,
+  .exam-print,
+  .exam-print * {
     visibility: visible;
   }
-  .tt-print {
+  .tt-print,
+  .exam-print {
     position: absolute;
     left: 0;
     top: 0;
     width: 100%;
   }
   .tt-card {
+    break-inside: avoid;
+  }
+  table {
+    break-inside: auto;
+  }
+  tr {
     break-inside: avoid;
   }
 }

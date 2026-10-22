@@ -14,6 +14,8 @@
 //  - Students with clashing papers sit them sequentially in the Clash Room;
 //    the seat string ("CR-01 2nd 09:50-11:10") carries the real timing, which
 //    effectiveStart() extracts so the sheet always shows when they actually sit.
+import type { ClassSession } from "./types";
+import type { Picked } from "./timetable";
 import { EXAM_DUAL_CODE_SLOTS, EXAM_TERM } from "./exam-meta";
 
 export { EXAM_TERM, EXAM_DUAL_CODE_SLOTS };
@@ -181,6 +183,96 @@ export function lookupStudent(ds: ExamDataset, input: string): StudentLookup {
   return { kind: "unknown", reg: fullForm(core), near: nearMatches(ds, core) };
 }
 
+// ─── Type-ahead suggestions (roll numbers + names) ───────────────────────
+
+/**
+ * Suggest students as the user types either a roll number or a name.
+ *
+ * Roll-number matching is prefix/segment based, so every natural way of
+ * typing works: "FA25", "FA25-BCS-", "fa25bcs0", "FA25-BCS-065", "065".
+ * Name matching requires EVERY typed token to appear in the name, so
+ * "AYESHA KH" finds AYESHA KHAN but "AYESHA SMITH" finds nothing.
+ *
+ * Ordering: names that START with the first token come before the rest;
+ * roll hits lead when the query looks roll-ish (digits present), else names lead.
+ */
+export function searchSuggestions(
+  ds: ExamDataset,
+  query: string,
+  limit = 8,
+): Suggestion[] {
+  const q = String(query ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, " ");
+  if (!q) return [];
+  const compact = compactOf(q);
+  const tokens = q.split(" ").filter(Boolean);
+
+  const nameHits: Suggestion[] = [];
+  const rollHits: Suggestion[] = [];
+  const push = (list: Suggestion[], s: Suggestion) => {
+    if (!list.some((x) => x.core === s.core)) list.push(s);
+  };
+
+  for (const reg of Object.keys(ds.students)) {
+    const core = normalizeReg(reg);
+    if (!core) continue;
+    const s: Suggestion = {
+      reg,
+      core,
+      name: ds.names[ds.students[reg][0]] ?? "",
+    };
+
+    // Roll-number hit: compact prefix of the compact core ("FA25BCS0"),
+    // or each typed part prefixes its core segment ("FA25-BCS-0"),
+    // or a digits-only query prefixes the roll ("065").
+    if (compact) {
+      const segs = core.split("-"); // [batch, prog, roll]
+      const segQuery = q.split(/[^A-Z0-9]+/).filter(Boolean);
+      const segsMatch =
+        segQuery.length > 1 &&
+        segQuery.every((part, i) => segs[i]?.startsWith(part));
+      if (
+        compactOf(core).startsWith(compact) ||
+        segsMatch ||
+        (/^\d+$/.test(compact) && segs[2].startsWith(compact))
+      )
+        push(rollHits, s);
+    }
+
+    // Name hit: every token appears in the name (order irrelevant).
+    if (tokens.every((t) => s.name.includes(t))) push(nameHits, s);
+  }
+
+  // Names first alphabetically, names that START with the first token ahead.
+  nameHits.sort(
+    (a, b) =>
+      +b.name.startsWith(tokens[0] ?? "") -
+        +a.name.startsWith(tokens[0] ?? "") ||
+      a.name.localeCompare(b.name) ||
+      order(a, b),
+  );
+  // Rolls ordered naturally batch → program → roll.
+  rollHits.sort(order);
+
+  // Digits/batch-token queries lead with roll matches; otherwise names lead.
+  const rollish = /^\d+$/.test(compact) || compact.length >= 4;
+  const merged = rollish
+    ? [
+        ...rollHits,
+        ...nameHits.filter((n) => !rollHits.some((r) => r.core === n.core)),
+      ]
+    : [
+        ...nameHits,
+        ...rollHits.filter((r) => !nameHits.some((n) => n.core === r.core)),
+      ];
+  return merged.slice(0, limit);
+}
+
+const compactOf = (s: string) => s.replace(/[^A-Z0-9]/g, "");
+const order = (a: Suggestion, b: Suggestion) => a.core.localeCompare(b.core);
+
 // ─── Ordering / grouping helpers ─────────────────────────────────────────────
 export function slotStart(slot: string): number {
   const m = slot.match(/^(\d{1,2}):(\d{2})/);
@@ -222,6 +314,401 @@ export const paperView = {
   room: (p: Paper) => p.room || "Room TBA",
   isClash: (p: Paper) => !!p.clashSession,
 };
+
+// ─── Human formatting (12h times everywhere students look) ───────────────
+
+/** "08:30-09:50" → "8:30 AM–9:50 AM" (en dash, 12h). */
+export function i12(slot: string): string {
+  const conv = (t: string) => {
+    const m = t.match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return t;
+    let h = +m[1];
+    const ampm = h >= 12 ? "PM" : "AM";
+    h = h % 12 || 12;
+    return `${h}:${m[2]} ${ampm}`;
+  };
+  const [a, b] = slot.split("-");
+  return `${conv(a ?? "")}–${conv(b ?? "")}`;
+}
+
+/** "2026-11-02" → "2 Nov 2026". */
+export function dateView(date: string): string {
+  const d = new Date(`${date}T00:00:00`);
+  return isNaN(d.getTime())
+    ? date
+    : d.toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      });
+}
+
+/**
+ * Seat cell, humanized: clash-room seats carry a 24h window raw
+ * ("CR-01 2nd 09:50-11:10") → shown as "Clash Room 01 · 2nd sitting · 9:50 AM–11:10 AM".
+ * Ordinary seats pass through unchanged.
+ */
+export function seatView(seat: string): string {
+  const m = seat.match(/^CR-(\d+) (1st|2nd) (\d{2}:\d{2})-(\d{2}:\d{2})$/);
+  if (m)
+    return `Clash Room ${m[1]} · ${m[2]} sitting · ${i12(`${m[3]}-${m[4]}`)}`;
+  return seat || "—";
+}
+
+// ─── Student profile meta (derived, never invented) ───────────────────────
+const CLASS_TOKEN = /^([A-Za-z]{2,4})[- ]?(\d{1,2})([A-Za-z]{0,2})$/;
+
+/** "BCT-3A" → { prog: BCT, sem: 3, sec: A } · "BCS-6AB" → sec AB. */
+export function parseStudentClass(token: string): {
+  prog: string;
+  sem: number;
+  sec: string;
+} {
+  const m = String(token ?? "")
+    .trim()
+    .match(CLASS_TOKEN);
+  if (!m) return { prog: "", sem: 0, sec: "" };
+  return {
+    prog: m[1].toUpperCase(),
+    sem: parseInt(m[2], 10),
+    sec: m[3].toUpperCase(),
+  };
+}
+
+/** "FA25" → Fall 2025 · "SP23" → Spring 2023 (batch = intake term). */
+export function batchOf(core: string): string {
+  const m = core.match(/^([A-Za-z]{2})(\d{2})-/);
+  if (!m) return "";
+  const term = m[1].toUpperCase();
+  const name = term === "FA" ? "Fall" : term === "SP" ? "Spring" : term;
+  return `${name} 20${m[2]}`;
+}
+
+export const ORDINALS = [
+  "1st",
+  "2nd",
+  "3rd",
+  "4th",
+  "5th",
+  "6th",
+  "7th",
+  "8th",
+  "9th",
+  "10th",
+  "11th",
+  "12th",
+];
+export const ordinalSem = (n: number) =>
+  n >= 1 && n <= 12 ? `${ORDINALS[n - 1]}` : n ? String(n) : "";
+
+export type StudentMeta = {
+  prog: string;
+  sem: number;
+  sec: string;
+  primaryClass: string; // the class grouping most of their papers
+  classes: string[]; // every class grouping they sit with
+  intake: string; // "Fall 2025"
+};
+
+/** Profile facts derived only from the seating plan + reg number. */
+export function studentMeta(student: StudentRec): StudentMeta {
+  const tally = new Map<string, number>();
+  for (const p of student.papers)
+    if (p.cls && p.cls !== "—") tally.set(p.cls, (tally.get(p.cls) ?? 0) + 1);
+  const classes = [...tally.keys()].sort();
+  const sorted = [...tally.entries()].sort((a, b) => b[1] - a[1]);
+  const primary = sorted[0]?.[0] ?? classes[0] ?? "";
+  const t = primary
+    ? parseStudentClass(primary)
+    : { prog: "", sem: 0, sec: "" };
+  return {
+    prog: t.prog,
+    sem: t.sem,
+    sec: t.sec,
+    primaryClass: primary,
+    classes,
+    intake: batchOf(student.core),
+  };
+}
+
+// ─── Course-level facts (section-independent) ──────────────────────────────
+
+/** A course the roll number is examined in, with the class its paper sat in. */
+export type StudentCourse = { code: string; title: string; cls: string };
+
+/**
+ * The unique set of courses a roll number is examined in this term — derived
+ * ONLY from the seating plan. Each course is pinned by its own paper's class
+ * token, so a “BCS-4A” student who is improving a 3rd-semester paper (or was
+ * seated with a mismatched group) keeps their REAL combination instead of
+ * inheriting a whole section roster.
+ */
+export function studentCourses(papers: Paper[]): StudentCourse[] {
+  const byCode = new Map<string, StudentCourse>();
+  for (const p of sortPapers(papers)) {
+    if (!p.code || byCode.has(p.code)) continue;
+    byCode.set(p.code, { code: p.code, title: p.title, cls: p.cls });
+  }
+  return [...byCode.values()];
+}
+
+/**
+ * "BCT-3A" exists in the timetable either exactly or as its section-less
+ * base "BCT-3" (the CS timetable lists most non-CS programs without sections).
+ */
+export function normalizeTtClass(cls: string, available: Set<string>): string {
+  if (available.has(cls)) return cls;
+  const t = parseStudentClass(cls);
+  const base = t.sec ? `${t.prog}-${t.sem}` : cls;
+  if (t.sec && available.has(base)) return base;
+  // section-inless class token like "BCT-3" → try adding the largest section
+  for (const c of [...available].sort()) {
+    if (c.startsWith(`${base}-`) || (base === cls && c === base)) return c;
+  }
+  return "";
+}
+
+/**
+ * Build a student's weekly timetable picks: every timetable session whose
+ * class is one of the student's class groups, grouped per (class, course).
+ */
+function sessionsToPicks(
+  sessions: Array<{
+    cls: string;
+    code: string;
+    title: string;
+    day: string;
+    start: string;
+    end: string;
+    kind?: string;
+    room?: string;
+    instructor?: string;
+    inferred?: boolean;
+    note?: string;
+  }>,
+  classes: string[],
+): Picked[] {
+  const classSet = new Set(classes);
+  const byKey = new Map<
+    string,
+    { cls: string; code: string; title: string; sessions: Picked["sessions"] }
+  >();
+  for (const s of sessions) {
+    if (!classSet.has(s.cls)) continue;
+    const key = `${s.cls}|${s.code}`;
+    const row = byKey.get(key) ?? {
+      cls: s.cls,
+      code: s.code,
+      title: s.title,
+      sessions: [] as Picked["sessions"],
+    };
+    row.sessions.push({
+      ...s,
+      day: s.day as ClassSession["day"],
+      room: s.room ?? "",
+      note: s.note ?? "",
+      inferred: !!s.inferred,
+      sid: key + "#" + s.day + s.start,
+    } as Picked["sessions"][number]);
+    byKey.set(key, row);
+  }
+  return [...byKey.values()].map((r) => ({
+    id: r.code + "@" + r.cls,
+    ...r,
+  }));
+}
+
+// ─── Weekly timetable per roll number ──────────────────────────────
+
+const SEASON_OF: Record<string, string> = { FA: "Fall", SP: "Spring" };
+
+export type StudentTimetable = {
+  reg: string;
+  /** every timetable class we resolved for this student, e.g. ["BCS-3A"] */
+  matched: string[];
+  /** sibling sections the student could belong to if disambiguation failed */
+  options: string[];
+  picks: Picked[];
+  program: string | null;
+  batch: string | null;
+};
+
+/**
+ * Weekly timetable for a CS-dept roll number: "FA25-BCS-065" → their class
+ * section's sessions for the term. Loads the timetable chunk on demand.
+ * `preferCls` = cls tokens from the student's exam papers, which pin the exact
+ * section ("BCS-3A") when the timetable has siblings ("BCS-3B").
+ */
+export async function buildStudentTimetable(
+  core: string,
+  preferCls?: Iterable<string> | null,
+): Promise<StudentTimetable> {
+  const empty: StudentTimetable = {
+    reg: core,
+    matched: [],
+    options: [],
+    picks: [],
+    program: null,
+    batch: null,
+  };
+  const m = core.match(/^([A-Z]{2})(\d{2})-([A-Z]{2,4})-(\d{3})$/);
+  if (!m) return empty;
+  const [, seas, yy, prog] = m;
+  const batch = `${SEASON_OF[seas]} 20${yy}`;
+  const { CS_CLASSES, CS_SESSIONS } = await import("@/lib/cs-timetable");
+  const own = CS_CLASSES.filter((c) => c.prog === prog && c.batch === batch);
+  if (!own.length) return { ...empty, program: prog, batch };
+
+  const prefer = new Set(preferCls ?? []);
+  const hit = own.filter((c) => prefer.has(c.id));
+  const chosen = hit.length ? hit : own;
+  const ids = chosen.map((c) => c.id);
+
+  return {
+    reg: core,
+    matched: ids,
+    options: hit.length || own.length <= 1 ? [] : own.map((c) => c.id),
+    picks: sessionsToPicks(CS_SESSIONS, ids).sort((a, b) =>
+      a.code.localeCompare(b.code),
+    ),
+    program: prog,
+    batch,
+  };
+}
+
+// ─── Course-level weekly timetable (no section assumption) ───────────────────
+
+export type CourseWeek = {
+  /** courses found in the term's timetable, as editable weekly picks */
+  picks: Picked[];
+  /** courses not found in the timetable (old batches, repeats, other campus) */
+  missing: StudentCourse[];
+};
+
+/**
+ * Build a weekly timetable from the papers themselves — the student's EXACT
+ * course combination, resolved per (course, class) instead of via a section
+ * roster. Each paper's class token tries, in order:
+ *   1. exact class match in the timetable,
+ *   2. section-less/base tolerance ("BCT-3A" → "BCT-3"),
+ *   3. another class of the same program + semester,
+ * and anything left over lands in `missing` rather than being invented.
+ */
+export async function coursesWeek(papers: Paper[]): Promise<CourseWeek> {
+  const { CS_SESSIONS } = await import("@/lib/cs-timetable");
+  const picks: Picked[] = [];
+  const missing: StudentCourse[] = [];
+
+  for (const c of studentCourses(papers)) {
+    const cls = resolveTimetableCls(c.code, c.cls, CS_SESSIONS);
+    if (!cls) {
+      missing.push(c);
+      continue;
+    }
+    const forCode = CS_SESSIONS.filter((s) => s.code === c.code);
+
+    const seenSid = new Set<string>();
+    const sessions: Picked["sessions"] = [];
+    for (const s of forCode) {
+      if (s.cls !== cls) continue;
+      const sid = `${c.code}@${cls}#${s.day}#${s.start}#${s.end}#${s.kind ?? ""}`;
+      if (seenSid.has(sid)) continue;
+      seenSid.add(sid);
+      sessions.push({
+        ...s,
+        day: s.day as ClassSession["day"],
+        room: s.room ?? "",
+        note: s.note ?? "",
+        inferred: !!s.inferred,
+        sid,
+      });
+    }
+    if (!sessions.length) {
+      missing.push(c);
+      continue;
+    }
+    picks.push({
+      id: `${c.code}@${cls}`,
+      cls,
+      code: c.code,
+      title: forCode[0]?.title || c.title,
+      sessions,
+    });
+  }
+
+  picks.sort((a, b) => a.code.localeCompare(b.code));
+  return { picks, missing };
+}
+
+/**
+ * Shared tolerant class resolution (exact → section-less base → same
+ * program+semester). Used by coursesWeek() and courseDetails(); "" = no match.
+ */
+function resolveTimetableCls(
+  code: string,
+  paperCls: string,
+  sessions: Array<{ code: string; cls: string }>,
+): string {
+  const forCode = sessions.filter((s) => s.code === code);
+  const classSet = new Set(forCode.map((s) => s.cls));
+  let cls = classSet.has(paperCls)
+    ? paperCls
+    : normalizeTtClass(paperCls, classSet);
+  if (!cls) {
+    const t = parseStudentClass(paperCls);
+    cls = classSet.size
+      ? ([...classSet].find((k) => {
+          const kt = parseStudentClass(k);
+          return !!t.prog && kt.prog === t.prog && kt.sem === t.sem;
+        }) ?? "")
+      : "";
+  }
+  return cls;
+}
+
+// ─── Course detail: instructors & weekly load per course ───────────────────
+
+export type CourseDetail = {
+  code: string;
+  title: string;
+  cls: string; // class the exam paper sat with (seating plan)
+  timetableCls: string; // resolved timetable class ("" when not matched)
+  instructors: string[];
+  weeklyDays: string[]; // e.g. ["Mon","Wed"]
+  sessionsPerWeek: number;
+  matched: boolean;
+};
+
+/**
+ * Everything useful we know about each course the student is examined in.
+ * Instructors come from the official timetable (matched per course, with the
+ * same tolerant class resolution as coursesWeek — empty when unavailable:
+ * the profile never invents a name).
+ */
+export async function courseDetails(papers: Paper[]): Promise<CourseDetail[]> {
+  const { CS_SESSIONS } = await import("@/lib/cs-timetable");
+  return studentCourses(papers).map((c) => {
+    const timetableCls = resolveTimetableCls(c.code, c.cls, CS_SESSIONS);
+    const rel = CS_SESSIONS.filter(
+      (s) => s.code === c.code && s.cls === timetableCls,
+    );
+    const instructors = [
+      ...new Set(
+        rel.map((s) => String(s.instructor ?? "").trim()).filter(Boolean),
+      ),
+    ];
+    return {
+      code: c.code,
+      title: c.title,
+      cls: c.cls,
+      timetableCls,
+      instructors,
+      weeklyDays: [...new Set(rel.map((s) => s.day))],
+      sessionsPerWeek: rel.length,
+      matched: rel.length > 0,
+    };
+  });
+}
 
 // ─── Calendar export (.ics) ─────────────────────────────────────────────────
 function icsDT(date: string, slot: string): [string, string] | null {
@@ -266,8 +753,8 @@ export function papersToIcs(
       `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, "").slice(0, 15)}Z`,
       `DTSTART:${start}`,
       `DTEND:${end}`,
-      `SUMMARY:${icsEsc(`${p.code || p.title}${p.title && p.code ? " — " + p.title : ""} (${p.room === "Clash Room" ? p.effectiveSlot : p.slot})`)}`,
-      `LOCATION:${icsEsc(`${paperView.room(p)} · seat ${p.seat}`)}`,
+      `SUMMARY:${icsEsc(`${p.code || p.title}${p.title && p.code ? " — " + p.title : ""} (${i12(p.room === "Clash Room" ? (p.effectiveSlot ?? p.slot) : p.slot)})`)}`,
+      `LOCATION:${icsEsc(`${paperView.room(p)} · seat ${seatView(p.seat)}`)}`,
       `DESCRIPTION:${icsEsc(
         `${opts.name} · ${opts.term} · class ${p.cls}. Double-check with the official seating plan.${seatNote}`,
       )}`,
