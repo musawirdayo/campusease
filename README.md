@@ -12,7 +12,7 @@ schedule — for classes **and** exams.
 | --- | --- |
 | `/` | Landing page with a live "what's on right now" preview from the built-in CS timetable |
 | `/classes` | Weekly class-timetable builder — pick your courses, auto-resolver suggests clash-free sections, per-day stats, print / save as PDF |
-| `/exams` | Personal exam datesheet — upload your department's PDF (or use a published doc) for just *your* exams, with exam-clash warnings, repeat/custom picking, print |
+| `/exams` | Personal exam datesheet — enter a registration number, get every paper with its official room and seat; deep-linkable (`?reg=`), .ics calendar export, share link, print |
 | `/contact` | Public contact form → admin inbox |
 | `/admin` + `/admin/settings`, `/admin/messages` | Owner workspace: publish/archive schedules, AI parser configuration, contact inbox |
 | `/api/parse-timetable`, `/api/parse-datesheet` | Server-side PDF-text → structured rows (AI with a deterministic rules fallback) |
@@ -24,9 +24,12 @@ Key features:
 - **Clash detection** — overlapping classes in the weekly grid and overlapping
   exam slots on the same day are flagged everywhere (student pages and the
   admin review panel before publishing).
-- **Built-in Computer Science data** — the official CS weekly timetable and the
-  FA26 mid-datesheet ship as in-code datasets, so students don't need to
-  upload anything for CS.
+- **Built-in Computer Science data** — the official CS weekly timetable ships
+  as an in-code dataset, and the FA26 midterm exams ship as a per-student
+  seating dataset (generated from the department's official seating-plan xlsx
+  by `scripts/gen-exam-data.mjs` into `public/data/`). A personal datesheet is
+  a single registration-number lookup — the seating plan already resolves
+  clashes and dual-code papers (one student, one code, one seat).
 - **AI parser with fallback** — any department's PDF layout works through a
   strict JSON-schema AI call; if the AI fails, a deterministic rules parser
   for the standard mid-datesheet layout takes over, and the response is labelled
@@ -119,11 +122,14 @@ src/
     timetable.ts     # weekly grid math: clashes, dedupe, auto-resolver
     exam-utils.ts    # exam clash detection + row/date normalization + audit
     cs-timetable.ts  # built-in CS weekly timetable dataset
-    cs-datesheet.ts  # built-in CS FA26 exam datesheet dataset
+    exam-data.ts     # reg-number → personal datesheet engine (lookup, .ics)
+    exam-meta.ts     # generated exam-term summary (dates/counts)
     datesheet-local.ts # deterministic rules fallback parser
     ai-json.server.ts  # strict JSON-schema AI calls with bounded retries
     student-schedules.ts # useSaved() persistence hook
     __tests__/       # Vitest unit tests
+scripts/             # generator scripts (exam dataset from official xlsx)
+public/data/         # generated per-student exam dataset (do not hand-edit)
 supabase/            # one-time SQL setup scripts
 drizzle/             # migration snapshots (schema is managed via supabase/*.sql)
 ```

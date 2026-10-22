@@ -25,12 +25,7 @@ import { datesheetRowsToExams } from "@/lib/published";
 import { auditExams, normalDate, normalSlot } from "@/lib/exam-utils";
 import { DAYS, overlaps } from "@/lib/timetable";
 import type { Day } from "@/lib/types";
-import {
-  CS_DATESHEET_EXAMS,
-  CS_DATESHEET_LABEL,
-  CS_DATESHEET_TITLE,
-  CS_DATESHEET_VERSION,
-} from "@/lib/cs-datesheet";
+import { EXAM_SOURCE, EXAM_TERM } from "@/lib/exam-meta";
 import { CS_SESSIONS, CS_TT_VERSION } from "@/lib/cs-timetable";
 
 export const Route = createFileRoute("/_authenticated/admin/")({
@@ -348,13 +343,8 @@ function PublisherPage() {
       return;
     }
     if (kind === "datesheet") {
-      const builtIn = CS_DATESHEET_EXAMS as unknown as Row[];
-      setRows(builtIn);
-      if (!department) setDepartment(CS_DATESHEET_LABEL);
-      if (!title) setTitle(CS_DATESHEET_TITLE);
-      if (!version) setVersion(CS_DATESHEET_VERSION);
-      toast.success(
-        `Imported the built-in ${CS_DATESHEET_VERSION} datesheet (${builtIn.length} rows) — review, then publish`,
+      toast.info(
+        `${EXAM_TERM} is already built in from the official seating plan (${EXAM_SOURCE}) — /exams seats students by registration number, no upload needed. Use JSON import here only for other departments' class-level datesheets.`,
       );
     }
   }

@@ -7,7 +7,13 @@ import {
   usePublishedTimetables,
 } from "@/lib/published";
 import { CS_CLASSES, CS_SESSIONS, CS_TT_VERSION } from "@/lib/cs-timetable";
-import { CS_DATESHEET_EXAMS, CS_DATESHEET_VERSION } from "@/lib/cs-datesheet";
+import {
+  EXAM_DATES,
+  EXAM_DEPT,
+  EXAM_PAPERS,
+  EXAM_STUDENTS,
+  EXAM_TERM,
+} from "@/lib/exam-meta";
 import { DAY_FULL, fmt12, toMin } from "@/lib/timetable";
 import type { ClassSession, Day } from "@/lib/types";
 
@@ -66,15 +72,10 @@ function Landing() {
   const nowMin = mounted ? now.getHours() * 60 + now.getMinutes() : -1;
 
   // Next upcoming exam from the built-in CS datesheet (dates are ISO).
-  const nextExam = useMemo<(typeof CS_DATESHEET_EXAMS)[number] | null>(() => {
-    const floor = new Date().setHours(0, 0, 0, 0);
-    let best: (typeof CS_DATESHEET_EXAMS)[number] | null = null;
-    for (const e of CS_DATESHEET_EXAMS) {
-      const dt = new Date(e.date + "T00:00:00");
-      if (isNaN(dt.getTime()) || dt.getTime() < floor) continue;
-      if (!best || e.date < best.date) best = e;
-    }
-    return best;
+  // Next upcoming exam day from the built-in seating dataset.
+  const nextExam = useMemo<string | null>(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return EXAM_DATES.find((d) => d >= today) ?? null;
   }, []);
 
   // The day sheet shown in the hero: today when classes run, else Wednesday —
@@ -222,7 +223,7 @@ function Landing() {
                       {todayKey && nextStart
                         ? `Next CS class today at ${fmt12(nextStart)}`
                         : nextExam && mounted
-                          ? `Next CS exam ${nextExam.date}${nextExam.rooms[0] ? ` · ${nextExam.rooms[0]}` : ""}`
+                          ? `Next ${EXAM_DEPT} exam ${nextExam}`
                           : "CS timetable · Fall 2026"}
                     </span>
                   </>
@@ -356,7 +357,7 @@ function Landing() {
         <section className="border-t border-foreground/15">
           <div className="mx-auto max-w-[1080px] px-4 py-14 sm:py-16">
             <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              The registry · {CS_TT_VERSION} · {CS_DATESHEET_VERSION}
+              The registry · {CS_TT_VERSION} · {EXAM_TERM}
             </p>
             <dl className="mt-8 grid gap-8 sm:grid-cols-3">
               <div>
@@ -379,10 +380,10 @@ function Landing() {
               </div>
               <div>
                 <dt className="text-4xl sm:text-5xl font-semibold tracking-tight tabular-nums">
-                  {CS_DATESHEET_EXAMS.length}
+                  {EXAM_PAPERS}
                 </dt>
                 <dd className="mt-2 font-mono text-[10.5px] uppercase tracking-[0.15em] text-muted-foreground border-t border-foreground/20 pt-2">
-                  Exams on the built-in datesheet
+                  Seat assignments on the built-in datesheet
                 </dd>
               </div>
             </dl>
@@ -598,7 +599,9 @@ function DaySheet({
       {/* sheet footer — the print signature */}
       <figcaption className="border-t border-border bg-muted/40 px-4 py-2 flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.15em] text-muted-foreground">
         <span>always double-check with the official copy</span>
-        <span>{CS_DATESHEET_EXAMS.length} exams · v1.0</span>
+        <span>
+          {EXAM_TERM} · {EXAM_STUDENTS} students · {EXAM_PAPERS} seatings
+        </span>
       </figcaption>
     </figure>
   );

@@ -1,1429 +1,611 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import type { Exam } from "@/lib/types";
-import { normalDate, normalSlot, uniqueExams } from "@/lib/exam-utils";
 import {
-  findExamClashes,
-  findSharedSlots,
-  mergeSharedSlots,
-} from "@/lib/exam-utils";
-import { useSaved } from "@/lib/student-schedules";
+  CalendarDays,
+  CornerDownRight,
+  Download,
+  Printer,
+  Search,
+  Share2,
+  Sparkles,
+  UserRound,
+} from "lucide-react";
 import { AppNav } from "@/components/AppNav";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
+import { PrimaryButton, SectionCard } from "@/components/form-bits";
 import {
-  Field,
-  PrimaryButton,
-  SectionCard,
-  SectionLabel,
-  Select,
-} from "@/components/form-bits";
-import { usePublishedDatesheets, datesheetRowsToExams } from "@/lib/published";
-import { extractPdfPages } from "@/lib/pdf-layout";
-import {
-  CS_DATESHEET_EXAMS,
-  CS_DATESHEET_LABEL,
-  CS_DATESHEET_TITLE,
-  CS_DATESHEET_VERSION,
-} from "@/lib/cs-datesheet";
+  downloadIcs,
+  groupByDay,
+  loadExamDataset,
+  lookupStudent,
+  normalizeReg,
+  paperView,
+  papersToIcs,
+  sortPapers,
+  daysUntil,
+  type ExamDataset,
+  type Paper,
+  type StudentRec,
+} from "@/lib/exam-data";
+import { EXAM_DEPT, EXAM_SOURCE, EXAM_TERM } from "@/lib/exam-meta";
 
 export const Route = createFileRoute("/exams")({
   head: () => ({
     meta: [
-      { title: "Exam Datesheet — CampusEase" },
+      { title: "Personal Exam Datesheet — CampusEase" },
       {
         name: "description",
         content:
-          "Generate your personal exam datesheet from your department's datesheet PDF — with clash warnings.",
+          "Enter your registration number and get your personal exam datesheet — papers, rooms, and seats, straight from the official seating plan.",
       },
-      { property: "og:title", content: "Exam Datesheet — CampusEase" },
+      { property: "og:title", content: "Personal Exam Datesheet — CampusEase" },
       {
         property: "og:description",
         content:
-          "Generate your personal exam datesheet from your department's datesheet PDF — with clash warnings.",
+          "Your exams, rooms, and seats from one registration number. Powered by the official seating plan.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
     ],
   }),
-  component: Index,
+  component: ExamsRoute,
 });
 
-type Source = "builtin" | "published" | "upload";
-type Tab = "gen" | "how";
+type SavedDatesheet = { reg: string };
+const RECENTS_KEY = "campusease.exam.reg-recents";
 
-type StoredDatesheet = {
-  exams: Exam[];
-  label: string;
-  prog: string;
-  sem: string;
-  sec: string;
-  customPicks: string[];
-};
-
-function format12Hour(timeStr: string): string {
-  if (!timeStr) return "";
-  const parts = timeStr.split("-");
-  if (parts.length !== 2) return timeStr;
+function i12(slot: string): string {
   const conv = (t: string) => {
-    const [hStr, m] = t.trim().split(":");
-    let h = parseInt(hStr, 10);
+    const m = t.match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return t;
+    let h = +m[1];
     const ampm = h >= 12 ? "PM" : "AM";
     h = h % 12 || 12;
-    return `${h.toString().padStart(2, "0")}:${m} ${ampm}`;
+    return `${h}:${m[2]} ${ampm}`;
   };
-  try {
-    return `${conv(parts[0])} · ${conv(parts[1])}`;
-  } catch {
-    return timeStr;
-  }
+  const [a, b] = slot.split("-");
+  return `${conv(a ?? "")}–${conv(b ?? "")}`;
 }
 
-function dayLabel(date: string): string {
-  const d = new Date(date + "T00:00:00");
-  if (isNaN(d.getTime())) return date;
-  return d.toLocaleDateString("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-  });
-}
-
-function Index() {
-  const [tab, setTab] = useState<Tab>("gen");
-  const [src, setSrc] = useState<Source>("builtin");
-  const { data: publishedDatesheets = [] } = usePublishedDatesheets();
-  const publishedCount = publishedDatesheets.length;
-
-  // Deep-link params from the landing page (read once from the URL)
-  const deepDocRef = useRef(false);
-  const deepGenRef = useRef(false);
-  const autoPendingRef = useRef(false);
-
-  // Default to the strongest available source: an official published doc
-  // wins, then the built-in CS datesheet, then a manual PDF upload.
-  useEffect(() => {
-    setSrc((cur) =>
-      cur === "builtin" && publishedCount > 0 ? "published" : cur,
-    );
-  }, [publishedCount]);
-
-  const {
-    data: last,
-    setData: setLast,
-    ready,
-  } = useSaved<StoredDatesheet | null>("datesheet", null);
-
-  // Loaded source state
-  const [loadedExams, setLoadedExams] = useState<Exam[] | null>(null);
-  const [loadedLabel, setLoadedLabel] = useState("");
-  const [parseStep, setParseStep] = useState(0); // 0..5
-  const [parseError, setParseError] = useState<string | null>(null);
-  const [parseSource, setParseSource] = useState<string>("");
-
-  const [prog, setProg] = useState("");
-  const [sem, setSem] = useState("");
-  const [sec, setSec] = useState("");
-  const [result, setResult] = useState<Exam[] | null>(null);
-
-  // Repeater / custom-builder mode
-  const [mode, setMode] = useState<"regular" | "custom">("regular");
-  const [customPicks, setCustomPicks] = useState<string[]>([]);
-  const [customSearch, setCustomSearch] = useState("");
-
-  const [generated, setGenerated] = useState(0);
-  const [confirmed, setConfirmed] = useState(false);
-  const [restored, setRestored] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  // hydrate the last generated datesheet from the server
-  useEffect(() => {
-    if (!ready || !last) return;
-    if (last.exams?.length) {
-      setLastDocs(last.exams, last.label);
-      setMode(last.customPicks?.length ? "custom" : "regular");
-      setResult(last.exams);
-      setRestored(true);
-    }
-    if (last.prog) setProg(last.prog);
-    if (last.sem) setSem(last.sem);
-    if (last.sec) setSec(last.sec);
-    if (last.customPicks) setCustomPicks(last.customPicks);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready]);
-
-  // Landing deep link: /exams?doc=ID loads a published datesheet immediately.
-  useEffect(() => {
-    if (deepDocRef.current) return;
-    const qDoc = new URLSearchParams(window.location.search).get("doc")?.trim();
-    if (!qDoc) {
-      deepDocRef.current = true;
-      return;
-    }
-    if (!publishedDatesheets.length) return;
-    const doc = publishedDatesheets.find(
-      (d) => (d as unknown as { id: string }).id === qDoc,
-    );
-    if (!doc) {
-      deepDocRef.current = true;
-      return;
-    }
-    deepDocRef.current = true;
-    pickPublishedDoc(qDoc);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [publishedDatesheets]);
-
-  // Landing deep link: /exams?prog=&sem=&sec=&auto=1 pre-fills the filters and
-  // auto-generates as soon as any datesheet is loaded (restored one counts).
-  useEffect(() => {
-    if (deepGenRef.current) return;
-    const q = new URLSearchParams(window.location.search);
-    const qProg = q.get("prog")?.trim() || "";
-    const qSem = q.get("sem")?.trim() || "";
-    const qSec = q.get("sec")?.trim() || "";
-    const qAuto = q.get("auto") === "1";
-    if (!qProg && !qSem && !qSec && !qAuto) {
-      deepGenRef.current = true;
-      return;
-    }
-    if (ready && !loadedExams && qAuto && publishedCount === 0) {
-      // nothing restored/loaded yet — boot the built-in CS sheet so ?auto=1
-      // has something to work with
-      loadBuiltIn();
-    }
-    if (!ready || !loadedExams) return;
-    deepGenRef.current = true;
-    if (qProg) setProg(qProg);
-    if (qSem) setSem(qSem);
-    if (qSec) setSec(qSec);
-    if (qAuto) {
-      if (mode === "custom") setMode("regular");
-      autoPendingRef.current = true;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, loadedExams, publishedCount]);
-
-  // Fire the pending auto-generate once the prefilled filters land in state.
-  useEffect(() => {
-    if (!autoPendingRef.current) return;
-    if (mode !== "regular" || !loadedExams || !prog || !sem) return;
-    autoPendingRef.current = false;
-    generate();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadedExams, prog, sem, mode]);
-
-  useEffect(() => {
-    fetch("/api/counter", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((j: { count?: number }) => {
-        if (typeof j.count === "number") setGenerated(j.count);
-      })
-      .catch(() => {});
-  }, []);
-
-  function bumpCounter() {
-    fetch("/api/counter", { method: "POST" })
-      .then((r) => r.json())
-      .then((j: { count?: number }) => {
-        if (typeof j.count === "number") setGenerated(j.count);
-      })
-      .catch(() => {});
-  }
-
-  function applyResult(
-    matches: Exam[],
-    label: string,
-    p: string,
-    s: string,
-    c: string,
-    picks: string[] = customPicks,
-  ) {
-    setResult(matches);
-    setRestored(false);
-    if (matches.length) {
-      bumpCounter();
-      toast.success(
-        `${matches.length} exam${matches.length === 1 ? "" : "s"} on your datesheet${clashesOf(matches).length ? " · ⚠ clashes found" : ""}`,
-      );
-    }
-    // persist server-side (kind: datesheet)
-    setLast({
-      exams: matches,
-      label,
-      prog: p,
-      sem: s,
-      sec: c,
-      customPicks: picks,
-    });
-  }
-
-  function setLastDocs(exams: Exam[], label: string) {
-    setLoadedExams(exams);
-    setLoadedLabel(label);
-  }
-
-  const progs = useMemo(
-    () => [...new Set((loadedExams ?? []).map((e) => e.prog))].sort(),
-    [loadedExams],
-  );
-  const sems = useMemo(
-    () =>
-      [...new Set((loadedExams ?? []).map((e) => e.sem))].sort(
-        (a, b) => Number(a) - Number(b),
-      ),
-    [loadedExams],
-  );
-  const secs = useMemo(() => {
-    const s = Number(sem || 0);
-    const filtered = (loadedExams ?? []).filter(
-      (e) => (!prog || e.prog === prog) && (!s || Number(e.sem) === s),
-    );
-    return [...new Set(filtered.map((e) => e.sec).filter(Boolean))].sort();
-  }, [loadedExams, prog, sem]);
-
-  function generate() {
-    if (!loadedExams) return;
-    if (mode === "regular") {
-      if (!prog || !sem) {
-        setResult([]);
-        return;
-      }
-      const s = Number(sem);
-      const matches = loadedExams.filter(
-        (e) =>
-          e.prog === prog && Number(e.sem) === s && (!sec || e.sec === sec),
-      );
-      // One paper per registered code shows up twice; section picking lists
-      // the current code only (repeaters use custom picking below).
-      applyResult(
-        mergeSharedSlots(uniqueExams(matches)),
-        loadedLabel,
-        prog,
-        sem,
-        sec,
-      );
-    } else {
-      const picked = new Set(customPicks);
-      const matches = loadedExams.filter((e) => picked.has(examKey(e)));
-      applyResult(
-        uniqueExams(matches),
-        loadedLabel,
-        prog,
-        sem,
-        sec,
-        customPicks,
-      );
-    }
-  }
-
-  function examKey(e: Exam) {
-    return `${e.prog}|${e.sem}|${e.sec}|${e.date}|${e.time}|${e.code}`;
-  }
-
-  const clashesOf = (exams: Exam[]) => findExamClashes(exams);
-
-  function pickPublishedDoc(id: string) {
-    const doc = publishedDatesheets.find((d) => d.id === id);
-    if (!doc) return;
-    const exams = datesheetRowsToExams(doc.data as Record<string, unknown>[]);
-    setProg("");
-    setSec("");
-    setResult(null);
-    setCustomPicks([]);
-    setParseError(null);
-    setParseStep(0);
-    if (!exams.length) {
-      setLoadedExams(null);
-      toast.error("This published datesheet has no usable exam rows yet.");
-      return;
-    }
-    const deptName =
-      (doc as { departments?: { name?: string } }).departments?.name ??
-      doc.title;
-    setLastDocs(uniqueExams(exams), deptName);
-    toast.success(`Loaded ${exams.length} exams for ${deptName}`);
-  }
-
-  function loadBuiltIn() {
-    setParseError(null);
-    setParseStep(0);
-    setProg("");
-    setSec("");
-    setResult(null);
-    setCustomPicks([]);
-    setLastDocs(
-      uniqueExams(CS_DATESHEET_EXAMS),
-      `${CS_DATESHEET_LABEL} — ${CS_DATESHEET_TITLE}`,
-    );
-    toast.success(
-      `Loaded the official ${CS_DATESHEET_VERSION} datesheet (${CS_DATESHEET_EXAMS.length} exams)`,
-    );
-    setRestored(false);
-  }
-
-  async function handleFile(f: File) {
-    setParseError(null);
-    setParseStep(1);
-    try {
-      const pages = await extractPdfPages(f);
-      setParseStep(2);
-      setParseStep(3);
-      const all: Exam[] = [];
-      let dept = "";
-      let failed = 0;
-      let source = "";
-      const q = pages.map((t) => t);
-      await Promise.all(
-        Array.from({ length: 4 }, async () => {
-          while (q.length) {
-            const t = q.shift()!;
-            let ok = false;
-            for (let attempt = 0; attempt < 2 && !ok; attempt++) {
-              const res = await fetch("/api/parse-datesheet", {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ text: t }),
-              });
-              const j = await res
-                .json()
-                .catch(() => ({}) as { error?: string; source?: string });
-              if (res.ok) {
-                all.push(...(j.exams ?? []));
-                dept ||= j.department || "";
-                source ||= j.source || "";
-                ok = true;
-              } else if (res.status === 503)
-                throw new Error(j.error || `HTTP ${res.status}`);
-              else if (attempt === 0)
-                await new Promise((r) => setTimeout(r, 1500));
-            }
-            if (!ok) failed++;
-          }
-        }),
-      );
-      setParseStep(4);
-      const cleaned = uniqueExams(
-        all.map((e) => ({
-          ...e,
-          date: normalDate(e.date),
-          time: normalSlot(e.time),
-          sem: Number(e.sem) || 0,
-          rooms: Array.isArray(e.rooms) ? e.rooms : [],
-          sec: e.sec || "",
-        })),
-      );
-      if (!cleaned.length)
-        throw new Error(
-          failed
-            ? "We couldn't read this datesheet right now. Please try again — or send it to us via the contact page."
-            : "No exams found. The PDF may be a scanned image.",
-        );
-      setParseStep(5);
-      setParseSource(source);
-      const deptName = dept || f.name.replace(/\.pdf$/i, "");
-      setLastDocs(cleaned, deptName);
-      setProg("");
-      setSec("");
-      setResult(null);
-      setCustomPicks([]);
-      setRestored(false);
-      toast.success(`Read ${cleaned.length} exam rows for ${deptName}`);
-    } catch (err: unknown) {
-      setParseError(err instanceof Error ? err.message : "Failed to parse PDF");
-      setParseStep(0);
-    }
-  }
-
-  function printResult(id: string) {
-    const node = document.getElementById(id);
-    if (!node) return;
-    const w = window.open("", "_blank", "width=1100,height=800");
-    if (!w) return;
-    w.document
-      .write(`<!doctype html><html><head><title>CampusEase Datesheet</title>
-      <style>
-        body{font-family:ui-sans-serif,system-ui,sans-serif;color:#111;padding:24px}
-        table{width:100%;border-collapse:collapse;font-size:13px}
-        th,td{border:1px solid #ddd;padding:8px;text-align:left;vertical-align:top}
-        th{background:#f4f4f5}
-        h1{margin:0 0 4px;font-size:20px}
-        .sub{color:#666;margin-bottom:16px;font-size:13px}
-        .pill{display:inline-block;padding:2px 6px;background:#eef2ff;color:#3730a3;border-radius:4px;font-size:11px;margin-right:4px}
-      </style></head><body>${node.innerHTML}</body></html>`);
-    w.document.close();
-    w.focus();
-    setTimeout(() => {
-      w.print();
-    }, 300);
-  }
-
-  const activeResult = result;
-  const activeLabel = loadedLabel || "your datesheet";
-  const activeTitle =
-    mode === "regular"
-      ? `${prog || "—"} · Semester ${sem || "—"}${sec ? ` · Sec ${sec}` : ""}`
-      : `Custom picks · ${customPicks.length} course${customPicks.length === 1 ? "" : "s"}`;
-  const activeClashes = activeResult ? clashesOf(activeResult) : [];
-
-  return (
-    <div className="min-h-screen bg-[var(--background)] text-foreground">
-      <AppNav />
-      <main className="mx-auto max-w-5xl px-4 py-8">
-        <Breadcrumbs
-          items={[{ label: "Home", href: "/" }, { label: "Exam datesheet" }]}
-        />
-        <header className="mb-6">
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight">
-            Personal exam datesheet
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Load your department's datesheet, pick your class — we flag every
-            exam clash.
-          </p>
-        </header>
-
-        <Tabs tab={tab} setTab={setTab} />
-
-        {tab === "how" ? (
-          <HowItWorks />
-        ) : (
-          <>
-            <Stats generated={generated} loaded={loadedExams ? 1 : 0} />
-            <Card>
-              <SectionLabel>Step 1 — Your department's datesheet</SectionLabel>
-              <div
-                className={`grid grid-cols-1 gap-3 ${
-                  publishedDatesheets.length > 1
-                    ? "sm:grid-cols-3"
-                    : "sm:grid-cols-2"
-                }`}
-              >
-                {publishedDatesheets.length > 0 && (
-                  <DeptCard
-                    active={src === "published"}
-                    onClick={() => {
-                      setSrc("published");
-                      setParseStep(0);
-                    }}
-                    icon="📚"
-                    title="Published datesheets"
-                    sub={publishedDatesheets
-                      .map(
-                        (d) =>
-                          (d as unknown as { departments?: { name?: string } })
-                            .departments?.name ?? d.title,
-                      )
-                      .slice(0, 3)
-                      .join(" · ")}
-                  />
-                )}
-                <DeptCard
-                  active={src === "builtin"}
-                  onClick={() => {
-                    setSrc("builtin");
-                    if (!loadedExams) loadBuiltIn();
-                    setParseStep(0);
-                  }}
-                  icon="🏛️"
-                  title="Computer Science (official)"
-                  sub="Mid DateSheet FA26 v1 — already added for you"
-                />
-                <DeptCard
-                  active={src === "upload"}
-                  onClick={() => setSrc("upload")}
-                  icon="📄"
-                  title="Upload datesheet PDF"
-                  sub="Works with any department's layout"
-                />
-              </div>
-            </Card>
-
-            {src === "builtin" && (
-              <Card>
-                <SectionLabel>
-                  Step 2 — Official Computer Science datesheet
-                </SectionLabel>
-                <div className="rounded-md border border-border bg-muted/40 px-3 py-2.5 text-sm flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <div className="font-medium">
-                      {CS_DATESHEET_TITLE} · {CS_DATESHEET_VERSION}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      Official "Mids D-Sheet CS v1.pdf" —{" "}
-                      {CS_DATESHEET_EXAMS.length} exams over 7 exam days, 02–09
-                      Nov 2026.
-                    </div>
-                  </div>
-                  <button
-                    onClick={loadBuiltIn}
-                    className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
-                  >
-                    {loadedLabel.startsWith(CS_DATESHEET_LABEL)
-                      ? "Reload"
-                      : "Load"}
-                  </button>
-                </div>
-                {loadedExams && loadedLabel.startsWith(CS_DATESHEET_LABEL) && (
-                  <div className="mt-3 rounded-md border border-border bg-primary/5 px-3 py-2 text-sm">
-                    ✅ Loaded <strong>{loadedExams.length}</strong> exams. Now
-                    select your class below.
-                  </div>
-                )}
-              </Card>
-            )}
-
-            {src === "published" && (
-              <Card>
-                <SectionLabel>
-                  Step 2 — Choose your department's published datesheet
-                </SectionLabel>
-                <div className="space-y-1.5">
-                  {publishedDatesheets
-                    .map(
-                      (d) =>
-                        d as unknown as {
-                          id: string;
-                          title: string;
-                          version: string;
-                          departments?: { name?: string } | null;
-                        },
-                    )
-                    .map((d) => (
-                      <button
-                        key={d.id}
-                        onClick={() => pickPublishedDoc(d.id)}
-                        className={`w-full text-left rounded-md border px-3 py-2.5 text-sm transition ${
-                          loadedLabel === (d.departments?.name ?? d.title) &&
-                          loadedExams
-                            ? "border-primary bg-primary/5"
-                            : "border-input hover:bg-muted"
-                        }`}
-                      >
-                        <div className="font-medium">
-                          {d.departments?.name ?? d.title}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {d.title} · {d.version}
-                        </div>
-                      </button>
-                    ))}
-                </div>
-                {loadedExams && loadedLabel && (
-                  <div className="mt-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
-                    ✅ Loaded <strong>{loadedExams.length}</strong> exam rows
-                    for <strong>{loadedLabel}</strong>. Now select your class
-                    below.
-                  </div>
-                )}
-              </Card>
-            )}
-
-            {src === "upload" && (
-              <Card>
-                <SectionLabel>Step 2 — Upload your datesheet PDF</SectionLabel>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full border-2 border-dashed border-border rounded-lg p-8 text-center hover:bg-muted transition"
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".pdf,application/pdf"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) void handleFile(f);
-                    }}
-                  />
-                  <div className="text-3xl">📄</div>
-                  <div className="mt-2 font-medium text-sm">
-                    Click to upload your department's datesheet
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    The PDF is read in your browser; only the page text is sent
-                    for parsing.
-                  </div>
-                </button>
-
-                {parseStep > 0 && (
-                  <div className="mt-4 space-y-1.5 text-xs text-muted-foreground">
-                    <Step
-                      n={1}
-                      cur={parseStep}
-                      label="Extracting text from PDF (in your browser)"
-                    />
-                    <Step n={2} cur={parseStep} label="Normalizing layout" />
-                    <Step
-                      n={3}
-                      cur={parseStep}
-                      label="Reading datesheet (AI parser)"
-                    />
-                    <Step
-                      n={4}
-                      cur={parseStep}
-                      label="Receiving structured exams"
-                    />
-                    <Step
-                      n={5}
-                      cur={parseStep}
-                      label="Indexing programs and sections"
-                    />
-                  </div>
-                )}
-
-                {parseError && (
-                  <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 text-destructive px-3 py-2 text-sm">
-                    {parseError}
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                      <span>Still unreadable?</span>
-                      <a
-                        href="/contact"
-                        className="underline hover:no-underline font-medium"
-                      >
-                        Send it to us via the contact page
-                      </a>
-                      <span className="opacity-70">
-                        — the owner can add it manually for every student.
-                      </span>
-                    </div>
-                  </div>
-                )}
-
-                {loadedExams && (
-                  <div className="mt-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
-                    ✅ Parsed <strong>{loadedExams.length}</strong> exam rows
-                    {loadedLabel ? (
-                      <>
-                        {" "}
-                        for <strong>{loadedLabel}</strong>
-                      </>
-                    ) : null}
-                    {parseSource === "rules-fallback" && (
-                      <span className="ml-1 text-xs text-muted-foreground">
-                        (offline rules engine — AI was unavailable)
-                      </span>
-                    )}
-                    . Now select your class below.
-                  </div>
-                )}
-              </Card>
-            )}
-
-            {loadedExams && (
-              <Card>
-                <SectionLabel>Step 3 — Your class details</SectionLabel>
-                <div className="flex items-center justify-between mb-3 gap-2">
-                  <div className="flex rounded-md border border-border overflow-hidden text-xs font-medium shrink-0">
-                    <ModeBtn
-                      active={mode === "regular"}
-                      onClick={() => setMode("regular")}
-                    >
-                      Regular
-                    </ModeBtn>
-                    <ModeBtn
-                      active={mode === "custom"}
-                      onClick={() => setMode("custom")}
-                    >
-                      Repeater (custom)
-                    </ModeBtn>
-                  </div>
-                </div>
-
-                {mode === "regular" ? (
-                  <>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <Field label="Program">
-                        <Select
-                          value={prog}
-                          onChange={(v) => {
-                            setProg(v);
-                            setSec("");
-                          }}
-                        >
-                          <option value="">Select program</option>
-                          {progs.map((p) => (
-                            <option key={p} value={p}>
-                              {p === "ALL" ? "ALL (all programs)" : p}
-                            </option>
-                          ))}
-                        </Select>
-                      </Field>
-                      <Field label="Semester">
-                        <Select
-                          value={sem}
-                          onChange={(v) => {
-                            setSem(v);
-                            setSec("");
-                          }}
-                        >
-                          <option value="">Select semester</option>
-                          {sems.map((s) => (
-                            <option key={String(s)} value={String(s)}>
-                              {String(s)}
-                            </option>
-                          ))}
-                        </Select>
-                      </Field>
-                      <Field label="Section">
-                        <Select value={sec} onChange={setSec}>
-                          <option value="">All sections</option>
-                          {secs.map((s) => (
-                            <option key={String(s)} value={String(s)}>
-                              {String(s)}
-                              {String(s) === "R" ? " (Repeater)" : ""}
-                            </option>
-                          ))}
-                        </Select>
-                      </Field>
-                    </div>
-                    <ConfirmCheck checked={confirmed} onChange={setConfirmed} />
-                    <PrimaryButton
-                      className="mt-3"
-                      disabled={!confirmed}
-                      onClick={generate}
-                    >
-                      Generate my datesheet
-                    </PrimaryButton>
-                  </>
-                ) : (
-                  <CustomBuilder
-                    exams={loadedExams}
-                    search={customSearch}
-                    setSearch={setCustomSearch}
-                    picks={customPicks}
-                    setPicks={setCustomPicks}
-                    examKey={examKey}
-                    confirmed={confirmed}
-                    onConfirmedChange={setConfirmed}
-                    onGenerate={generate}
-                  />
-                )}
-              </Card>
-            )}
-
-            {activeResult !== null && (
-              <ResultBlock
-                id="exam-result"
-                matches={activeResult}
-                title={activeTitle}
-                onPrint={() => printResult("exam-result")}
-                clashes={activeClashes}
-                hasRestored={restored}
-              />
-            )}
-          </>
-        )}
-      </main>
-    </div>
-  );
-}
-
-function ModeBtn({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`px-3 py-1.5 transition ${
-        active
-          ? "bg-primary text-primary-foreground"
-          : "bg-background hover:bg-muted"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Tabs({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
-  const items: { id: Tab; label: string }[] = [
-    { id: "gen", label: "Generate" },
-    { id: "how", label: "How it works" },
-  ];
-  return (
-    <div className="flex border-b border-border mb-5">
-      {items.map((it) => (
-        <button
-          key={it.id}
-          onClick={() => setTab(it.id)}
-          className={`-mb-px px-4 py-2.5 text-sm font-medium border-b-2 transition ${
-            tab === it.id
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          {it.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function Card({ children }: { children: React.ReactNode }) {
-  return <SectionCard className="mb-4">{children}</SectionCard>;
-}
-
-function DeptCard({
-  active,
-  onClick,
-  icon,
-  title,
-  sub,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: string;
-  title: string;
+function dayHeading(date: string): {
+  top: string;
   sub: string;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`text-left rounded-lg border p-4 transition ${
-        active
-          ? "border-primary ring-2 ring-primary/20 bg-primary/5"
-          : "border-border hover:border-primary/50"
-      }`}
-    >
-      <div role="img" aria-label={`${title} option`} className="text-2xl">
-        {icon}
-      </div>
-      <div className="mt-2 font-medium text-sm">{title}</div>
-      <div className="text-xs text-muted-foreground mt-0.5">{sub}</div>
-    </button>
-  );
+  countdown: string;
+} {
+  const d = new Date(`${date}T00:00:00`);
+  const left = daysUntil(date);
+  const sub =
+    d.toLocaleDateString("en-GB", { day: "numeric", month: "long" }) +
+    (d.getFullYear() ? ` ${d.getFullYear()}` : "");
+  const countdown =
+    left === 0
+      ? "today"
+      : left === 1
+        ? "tomorrow"
+        : left > 1
+          ? `in ${left} days`
+          : `${-left} ${left === -1 ? "day" : "days"} ago`;
+  return {
+    top: d.toLocaleDateString("en-GB", { weekday: "long" }),
+    sub,
+    countdown,
+  };
 }
 
-function Step({ n, cur, label }: { n: number; cur: number; label: string }) {
-  const state = cur > n ? "done" : cur === n ? "active" : "todo";
-  const dot =
-    state === "done"
-      ? "bg-primary"
-      : state === "active"
-        ? "bg-primary animate-pulse"
-        : "bg-border";
-  return (
-    <div className="flex items-center gap-2">
-      <span className={`inline-block w-2 h-2 rounded-full ${dot}`} />
-      <span className={state === "todo" ? "opacity-60" : ""}>{label}</span>
-    </div>
-  );
+function useDataset() {
+  const [state, setState] = useState<{
+    ds: ExamDataset | null;
+    error: string | null;
+    loading: boolean;
+  }>({ ds: null, error: null, loading: true });
+  useEffect(() => {
+    let alive = true;
+    loadExamDataset()
+      .then((ds) => alive && setState({ ds, error: null, loading: false }))
+      .catch(
+        (e) =>
+          alive &&
+          setState({
+            ds: null,
+            error:
+              e instanceof Error ? e.message : "Could not load the dataset",
+            loading: false,
+          }),
+      );
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return state;
 }
 
-function Stats({ generated, loaded }: { generated: number; loaded: number }) {
-  const Item = ({ v, l }: { v: React.ReactNode; l: string }) => (
-    <div className="bg-card border border-border rounded-lg px-3 py-3 sm:px-4">
-      <div className="text-lg font-semibold">{v}</div>
-      <div className="text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">
-        {l}
-      </div>
-    </div>
-  );
-  return (
-    <div className="grid grid-cols-3 gap-2 mb-4 sm:gap-3">
-      <Item v={generated.toLocaleString()} l="Timetables generated" />
-      <Item v="AI + rules" l="Parser mode" />
-      <Item v={loaded ? "Loaded" : "—"} l="Datesheet" />
-    </div>
-  );
+function useRecents(): [Array<{ reg: string }>, (reg: string) => void] {
+  const [recents, setRecents] = useState<Array<{ reg: string }>>(() => {
+    try {
+      const raw = localStorage.getItem(RECENTS_KEY);
+      const arr = raw ? (JSON.parse(raw) as Array<{ reg: string }>) : [];
+      return Array.isArray(arr) ? arr.slice(0, 6) : [];
+    } catch {
+      return [];
+    }
+  });
+  const remember = useCallback((reg: string) => {
+    setRecents((cur) => {
+      const next = [{ reg }, ...cur.filter((r) => r.reg !== reg)].slice(0, 6);
+      try {
+        localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
+      } catch {
+        /* storage unavailable — fine */
+      }
+      return next;
+    });
+  }, []);
+  return [recents, remember];
 }
 
-function ClashBanner({
-  clashes,
-  exams,
+function SearchCard({
+  value,
+  onChange,
+  onSubmit,
+  busy,
+  recents,
+  error,
 }: {
-  clashes: ReturnType<typeof findExamClashes>;
-  exams: Exam[];
+  value: string;
+  onChange: (v: string) => void;
+  onSubmit: (v: string) => void;
+  busy: boolean;
+  recents: Array<{ reg: string }>;
+  error: string | null;
 }) {
-  const shared = findSharedSlots(exams);
-  if (!clashes.length && !shared.length) return null;
-  const list = (pairs: ReturnType<typeof findSharedSlots>) => (
-    <ul className="list-disc ml-4 mt-1 text-xs space-y-0.5">
-      {pairs.map((c, i) => (
-        <li key={i}>
-          <strong>{dayLabel(c.date)}</strong>: {c.a.code} (
-          {format12Hour(c.a.time)}) ↔ {c.b.code} ({format12Hour(c.b.time)})
-          {c.a.prog && c.b.prog
-            ? ` · ${c.a.prog}${c.a.sem}-${c.a.sec || ""}`
-            : ""}
-        </li>
-      ))}
-    </ul>
-  );
+  const ok = !!normalizeReg(value);
   return (
-    <>
-      {clashes.length > 0 && (
-        <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 mb-4 text-sm text-destructive">
-          <div className="font-semibold flex items-center gap-2">
-            <span>
-              ⚠ {clashes.length} exam clash{clashes.length === 1 ? "" : "es"} in
-              this datesheet
-            </span>
-          </div>
-          {list(clashes)}
-          <p className="mt-1.5 text-[11px] opacity-80">
-            These courses are scheduled at overlapping times. Contact your
-            department — v1 datesheets often get corrected in v2.
-          </p>
+    <SectionCard label="Step 1 · Enter your registration number">
+      <form
+        className="flex flex-col gap-3 sm:flex-row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (ok && !busy) onSubmit(value);
+        }}
+      >
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="e.g. FA25-BCS-065"
+          spellCheck={false}
+          autoCapitalize="characters"
+          autoCorrect="off"
+          autoComplete="off"
+          inputMode="text"
+          maxLength={32}
+          data-1p-ignore
+          aria-label="Registration number"
+          className="h-12 w-full rounded-lg border border-input bg-background px-4 font-mono text-base uppercase tracking-wide placeholder:normal-case italic placeholder:font-sans placeholder:tracking-normal placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+          disabled={busy}
+          style={{ textTransform: "uppercase" }}
+        />
+        <PrimaryButton
+          type="submit"
+          disabled={!ok || busy}
+          className="h-12 shrink-0 px-6 sm:w-auto"
+        >
+          <Search className="size-4" />
+          {busy ? "Loading…" : "Get my datesheet"}
+        </PrimaryButton>
+      </form>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+        <span>
+          Format{" "}
+          <code className="rounded bg-muted px-1 font-mono text-[10.5px]">
+            CIIT/FA25-BCS-065/ISB
+          </code>{" "}
+          — the CIIT and ISB parts are optional; case doesn't matter.
+        </span>
+        {error && <span className="text-destructive">{error}</span>}
+      </div>
+      {recents.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-1.5 print:hidden">
+          <span className="text-[10.5px] uppercase tracking-wide font-mono text-muted-foreground">
+            recent:
+          </span>
+          {recents.map((r) => (
+            <button
+              key={r.reg}
+              onClick={() => {
+                onChange(r.reg);
+                onSubmit(r.reg);
+              }}
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/60 px-2.5 py-1 font-mono text-[11px] hover:bg-muted transition"
+            >
+              {normalizeReg(r.reg)}
+            </button>
+          ))}
         </div>
       )}
-      {shared.length > 0 && (
-        <div className="rounded-md border border-primary/40 bg-primary/5 p-3 mb-4 text-sm text-primary">
-          <div className="font-semibold">
-            One paper, two codes — {shared.length} shared slot
-            {shared.length === 1 ? "" : "s"}
-          </div>
-          {list(shared)}
-          <p className="mt-1.5 text-[11px] opacity-80">
-            The department runs one exam session listed under two registered
-            codes (e.g. current students and repeaters), often sharing a room.
-            You sit the code you registered for — no conflict, and no need to
-            contact anyone.
-          </p>
-        </div>
-      )}
-    </>
+    </SectionCard>
   );
 }
 
-function ResultBlock({
-  id,
-  matches,
-  title,
-  onPrint,
-  clashes,
-  hasRestored,
-}: {
-  id: string;
-  matches: Exam[];
-  title: string;
-  onPrint: () => void;
-  clashes: ReturnType<typeof findExamClashes>;
-  hasRestored?: boolean;
-}) {
-  if (!matches.length) {
-    return (
-      <Card>
-        <div className="text-center py-8">
-          <div className="text-3xl">📭</div>
-          <div className="mt-2 font-medium">No exams found</div>
-          <div className="text-sm text-muted-foreground">
-            Try a different program / semester / section — or check that the
-            right datesheet is loaded.
-          </div>
-        </div>
-      </Card>
-    );
-  }
-  const today = new Date();
-  const byDate = new Map<string, Exam[]>();
-  for (const e of matches) {
-    const arr = byDate.get(e.date) ?? [];
-    arr.push(e);
-    byDate.set(e.date, arr);
-  }
+function PaperRow({ paper }: { paper: Paper }) {
+  const clash = paperView.isClash(paper);
+  const [start, end] = (paper.effectiveSlot ?? paper.slot).split("-");
+  const shownSlot = `${start}–${end}`;
   return (
     <div
-      className="bg-card border border-border rounded-lg p-4 mb-4 shadow-sm sm:p-5"
-      id={id}
+      className={`flex gap-3 px-4 py-3 ${clash ? "bg-amber-500/5" : ""}`}
+      style={{
+        boxShadow: `inset 3px 0 0 ${clash ? "var(--color-amber-500, #f59e0b)" : "transparent"}`,
+      }}
     >
-      {hasRestored && (
-        <div className="mb-3 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
-          Restored from your last session (saved server-side).
-        </div>
-      )}
-      <div className="flex items-start justify-between gap-3 mb-4">
-        <div>
-          <h2 className="text-lg font-semibold">{title}</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {matches.length} exam{matches.length === 1 ? "" : "s"} ·{" "}
-            {byDate.size} day{byDate.size === 1 ? "" : "s"}
-          </p>
-        </div>
-        <button
-          onClick={onPrint}
-          className="rounded-md border border-input bg-background hover:bg-muted px-3 py-1.5 text-xs font-medium"
-        >
-          Print / Save PDF
-        </button>
+      <div className="w-[92px] shrink-0 font-mono text-[10.5px] pt-0.5 tabular-nums text-muted-foreground">
+        {i12(shownSlot)}
       </div>
-      <ClashBanner clashes={clashes} exams={matches} />
-      <div className="-mx-2 hidden overflow-x-auto sm:block print:block print:mx-0 print:overflow-visible">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-muted-foreground border-b border-border">
-              <th className="px-2 py-2">Date</th>
-              <th className="px-2 py-2">Time</th>
-              <th className="px-2 py-2">Course</th>
-              <th className="px-2 py-2">Instructor</th>
-              <th className="px-2 py-2">Rooms</th>
-            </tr>
-          </thead>
-          <tbody>
-            {matches.map((e, i) => {
-              const clashed = clashes.some((c) => DateAffects(c, e));
-              const diff = Math.ceil(
-                (new Date(e.date + "T00:00:00").getTime() - today.getTime()) /
-                  86400000,
-              );
-              return (
-                <tr
-                  key={i}
-                  className={`border-b border-border/60 align-top ${clashed ? "bg-destructive/5" : ""}`}
-                >
-                  <td className="px-2 py-2.5">
-                    <div className="font-medium">{dayLabel(e.date)}</div>
-                    {diff > 0 && (
-                      <div className="text-[11px] text-amber-600">
-                        {diff} day{diff === 1 ? "" : "s"} away
-                      </div>
-                    )}
-                    {diff === 0 && (
-                      <div className="text-[11px] text-emerald-600">Today</div>
-                    )}
-                  </td>
-                  <td className="px-2 py-2.5">
-                    <span className="inline-block bg-primary/10 text-primary rounded px-2 py-0.5 text-xs font-mono">
-                      {format12Hour(e.time)}
-                    </span>
-                  </td>
-                  <td className="px-2 py-2.5">
-                    <div className="font-medium">
-                      {e.code} · {e.course}
-                    </div>
-                    {clashed && (
-                      <div className="text-[11px] font-semibold text-destructive">
-                        Clash
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-2 py-2.5">{e.instructor}</td>
-                  <td className="px-2 py-2.5">
-                    <div className="flex flex-wrap gap-1">
-                      {e.rooms.map((r, j) => (
-                        <span
-                          key={j}
-                          className="pill inline-block bg-muted text-foreground/80 rounded px-1.5 py-0.5 text-[11px] font-mono"
-                        >
-                          {r}
-                        </span>
-                      ))}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <span className="font-mono text-[11.5px] font-bold tracking-tight text-primary">
+            {paperView.code(paper)}
+          </span>
+          <span className="text-[12.5px] font-semibold leading-snug">
+            {paper.title}
+          </span>
+          <span className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-wide text-muted-foreground">
+            {paper.cls}
+          </span>
+          {clash && (
+            <span className="rounded-sm border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-wide text-amber-700 dark:text-amber-400">
+              clash room · session {paper.clashSession}
+            </span>
+          )}
+        </div>
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="inline-flex items-baseline gap-1 rounded-md bg-muted/70 px-2 py-1 font-mono text-[11px]">
+            <span className="text-muted-foreground text-[9.5px] uppercase tracking-wider">
+              room
+            </span>
+            <span className="font-bold">{paperView.room(paper)}</span>
+          </span>
+          <span className="inline-flex items-baseline gap-1 rounded-md bg-primary/10 px-2 py-1 font-mono text-[11px] text-primary">
+            <span className="text-[9.5px] uppercase tracking-wider opacity-75">
+              seat
+            </span>
+            <span className="font-bold">{paper.seat}</span>
+          </span>
+          {paper.slot.startsWith("08:30") && paper.slot === "08:30-10:00" && (
+            <span className="text-[10px] text-muted-foreground">
+              hybrid · virtual campus joins this slot
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Datesheet({ student }: { student: StudentRec }) {
+  const papers = useMemo(
+    () => sortPapers(student.papers.filter((p) => p.date)),
+    [student.papers],
+  );
+  const nextP = useMemo(() => {
+    let best: Paper | null = null;
+    for (const p of papers) {
+      if (daysUntil(p.date) < 0) continue;
+      if (!best) best = p;
+      else {
+        const ka = `${p.date}|${p.effectiveSlot ?? p.slot}`;
+        const kb = `${best.date}|${best.effectiveSlot ?? best.slot}`;
+        if (ka.localeCompare(kb) < 0) best = p;
+      }
+    }
+    return best;
+  }, [papers]);
+  const classes = useMemo(
+    () => [...new Set(papers.map((p) => p.cls))],
+    [papers],
+  );
+  const clashPapers = papers.filter((p) => paperView.isClash(p));
+
+  return (
+    <>
+      {/* identity strip */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <div className="grid size-9 place-items-center rounded-full bg-primary/15 text-primary">
+            <UserRound className="size-4.5" />
+          </div>
+          <div>
+            <div className="text-sm font-semibold">{student.name}</div>
+            <div className="font-mono text-[11px] text-muted-foreground">
+              {student.reg}
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10.5px] font-mono">
+            {papers.length} {papers.length === 1 ? "paper" : "papers"}
+          </span>
+          <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10.5px] font-mono">
+            {new Set(papers.map((p) => p.date)).size}{" "}
+            {new Set(papers.map((p) => p.date)).size === 1 ? "day" : "days"}
+          </span>
+          {classes.map((c) => (
+            <span
+              key={c}
+              className="rounded-full border border-border bg-background px-2.5 py-1 text-[10.5px] font-mono"
+              title="Class groups you sit papers with"
+            >
+              {c}
+            </span>
+          ))}
+        </div>
       </div>
 
-      {/* Phones: the same rows as stacked cards — no sideways scrolling */}
-      <div className="space-y-2 sm:hidden">
-        {matches.map((e, i) => {
-          const clashed = clashes.some((c) => DateAffects(c, e));
-          const diff = Math.ceil(
-            (new Date(e.date + "T00:00:00").getTime() - today.getTime()) /
-              86400000,
-          );
+      {nextP && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 px-4 py-2.5 text-[12.5px]">
+          <Sparkles className="size-4 text-primary" />
+          <span>
+            Next paper <strong>{paperView.code(nextP)}</strong> — {nextP.title}
+          </span>
+          <CornerDownRight className="size-3 text-muted-foreground" />
+          <span className="font-mono text-[11px]">
+            {dayHeading(nextP.date).sub} ·{" "}
+            {i12(nextP.effectiveSlot ?? nextP.slot)} · {paperView.room(nextP)} ·
+            seat {nextP.seat}
+          </span>
+        </div>
+      )}
+
+      {clashPapers.length > 0 && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-[12px] text-amber-800 dark:text-amber-300">
+          <strong>You have clashes this term</strong> — {clashPapers.length}{" "}
+          paper{clashPapers.length === 1 ? "" : "s"} sit in the{" "}
+          <strong>Clash Room</strong> in sequenced sessions. Each row below
+          shows your exact room + window; arrive 10 minutes early.
+        </div>
+      )}
+
+      {/* day sheets */}
+      <div className="space-y-4">
+        {groupByDay(papers).map(([date, list]) => {
+          const h = dayHeading(date);
           return (
             <div
-              key={i}
-              className={`rounded-md border px-3 py-2.5 ${clashed ? "border-destructive/40 bg-destructive/5" : "border-border"}`}
+              key={date}
+              className="overflow-hidden rounded-lg border border-border bg-card shadow-sm"
             >
-              <div className="flex flex-wrap items-center gap-1.5">
-                <div className="font-medium">{dayLabel(e.date)}</div>
-                {diff > 0 && (
-                  <span className="text-[11px] text-amber-600">
-                    {diff} day{diff === 1 ? "" : "s"} away
+              <div className="flex items-baseline justify-between gap-2 border-b border-border bg-muted/40 px-4 py-2">
+                <div>
+                  <span className="text-[13px] font-semibold">{h.top}</span>
+                  <span className="ml-2 text-[11.5px] text-muted-foreground">
+                    {h.sub}
                   </span>
-                )}
-                {diff === 0 && (
-                  <span className="text-[11px] text-emerald-600">Today</span>
-                )}
-                <span className="ml-auto inline-block bg-primary/10 text-primary rounded px-2 py-0.5 text-xs font-mono">
-                  {format12Hour(e.time)}
+                </div>
+                <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                  {h.countdown}
                 </span>
               </div>
-              <div className="mt-1 text-sm font-medium">
-                {e.code} · {e.course}
-                {clashed && (
-                  <span className="ml-2 text-[11px] font-semibold text-destructive">
-                    Clash
-                  </span>
-                )}
-              </div>
-              <div className="mt-0.5 text-xs text-muted-foreground">
-                {e.instructor}
-              </div>
-              <div className="mt-1.5 flex flex-wrap gap-1">
-                {e.rooms.map((r, j) => (
-                  <span
-                    key={j}
-                    className="pill inline-block bg-muted text-foreground/80 rounded px-1.5 py-0.5 text-[11px] font-mono"
-                  >
-                    {r}
-                  </span>
+              <div className="divide-y divide-border">
+                {list.map((p) => (
+                  <PaperRow
+                    key={`${p.date}|${p.slot}|${p.code}|${p.seat}`}
+                    paper={p}
+                  />
                 ))}
               </div>
             </div>
           );
         })}
       </div>
-    </div>
-  );
-}
-
-function DateAffects(c: { a: Exam; b: Exam }, e: Exam): boolean {
-  return c.a === e || c.b === e;
-}
-
-function HowItWorks() {
-  const items = [
-    {
-      n: 1,
-      t: "Any department, any layout",
-      d: "Upload your department's datesheet PDF. The text is extracted in your browser, then an AI model converts it into a clean exam list. If AI is down, a built-in rules engine for the standard FA26 layout takes over.",
-    },
-    {
-      n: 2,
-      t: "Clash detection",
-      d: "If two of your exams run at overlapping times on the same day (a common v1 datesheet mistake), you'll see an explicit warning so you can contact your department before it surprises you.",
-    },
-    {
-      n: 3,
-      t: "Saved for you, server-side",
-      d: "Your generated datesheet is stored on the server and restored automatically next session — the file itself never leaves your browser unprocessed.",
-    },
-    {
-      n: 4,
-      t: "Print or save as PDF",
-      d: "One click opens a clean print view — choose 'Save as PDF' from the system print dialog.",
-    },
-  ];
-  return (
-    <Card>
-      <SectionLabel>How the exam datesheet works</SectionLabel>
-      <ol className="space-y-4">
-        {items.map((i) => (
-          <li key={i.n} className="flex gap-3">
-            <div className="flex-none w-7 h-7 rounded-full bg-primary text-primary-foreground text-xs font-semibold grid place-items-center">
-              {i.n}
-            </div>
-            <div>
-              <div className="font-medium text-sm">{i.t}</div>
-              <div className="text-sm text-muted-foreground mt-0.5">{i.d}</div>
-            </div>
-          </li>
-        ))}
-      </ol>
-    </Card>
-  );
-}
-
-function ConfirmCheck({
-  checked,
-  onChange,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <label className="mt-4 flex items-start gap-2.5 rounded-md border border-border bg-muted/40 px-3 py-2.5 cursor-pointer select-none hover:bg-muted transition">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="mt-0.5 h-4 w-4 accent-primary cursor-pointer"
-      />
-      <span className="text-sm text-foreground">
-        I will double-check this datesheet with my department's official
-        version.
-      </span>
-    </label>
-  );
-}
-
-type CourseGroup = {
-  key: string;
-  prog: string;
-  sem: number;
-  sec: string;
-  code: string;
-  course: string;
-  count: number;
-};
-
-function CustomBuilder({
-  exams,
-  search,
-  setSearch,
-  picks,
-  setPicks,
-  examKey,
-  confirmed,
-  onConfirmedChange,
-  onGenerate,
-}: {
-  exams: Exam[];
-  search: string;
-  setSearch: (v: string) => void;
-  picks: string[];
-  setPicks: (v: string[]) => void;
-  examKey: (e: Exam) => string;
-  confirmed: boolean;
-  onConfirmedChange: (v: boolean) => void;
-  onGenerate: () => void;
-}) {
-  const groups = useMemo<CourseGroup[]>(() => {
-    const map = new Map<string, CourseGroup>();
-    for (const e of exams) {
-      const key = examKey(e);
-      const prev = map.get(key);
-      if (prev) continue;
-      map.set(key, {
-        key,
-        prog: e.prog,
-        sem: e.sem,
-        sec: e.sec,
-        code: e.code,
-        course: e.course,
-        count: 1,
-      });
-    }
-    return [...map.values()].sort(
-      (a, b) =>
-        a.code.localeCompare(b.code) ||
-        a.prog.localeCompare(b.prog) ||
-        a.sem - b.sem ||
-        a.sec.localeCompare(b.sec),
-    );
-  }, [exams, examKey]);
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return groups;
-    return groups.filter(
-      (g) =>
-        g.code.toLowerCase().includes(q) ||
-        g.course.toLowerCase().includes(q) ||
-        `${g.prog}${g.sem}${g.sec}`.toLowerCase().includes(q),
-    );
-  }, [groups, search]);
-
-  function toggle(key: string) {
-    setPicks(
-      picks.includes(key) ? picks.filter((k) => k !== key) : [...picks, key],
-    );
-  }
-
-  return (
-    <>
-      <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300 mb-3">
-        <strong>Repeater mode:</strong> pick every course you're sitting (across
-        any program / semester / section, including R sections). We'll combine
-        them into one datesheet — and flag clashes.
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2 mb-3">
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search course code, name or class (e.g. CSC141, BCS 3-R, Calculus)…"
-          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-        <div className="text-xs text-muted-foreground self-center sm:text-right">
-          {picks.length} picked · {filtered.length} shown
-          {picks.length > 0 && (
-            <button
-              onClick={() => setPicks([])}
-              className="ml-2 underline hover:no-underline"
-            >
-              clear
-            </button>
-          )}
-        </div>
-      </div>
-
-      {picks.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mb-3">
-          {picks.map((k) => {
-            const g = groups.find((x) => x.key === k);
-            if (!g) return null;
-            return (
-              <button
-                key={k}
-                onClick={() => toggle(k)}
-                className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 text-primary border border-primary/30 px-2.5 py-1 text-[11px] font-mono hover:bg-primary/20 transition"
-                title="Click to remove"
-              >
-                {g.prog}
-                {g.sem}
-                {g.sec ? `-${g.sec}` : ""} · {g.code}
-                <span className="opacity-60">×</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      <div className="max-h-72 overflow-y-auto rounded-md border border-border divide-y divide-border">
-        {filtered.length === 0 ? (
-          <div className="text-center text-sm text-muted-foreground py-8">
-            No courses match.
-          </div>
-        ) : (
-          filtered.slice(0, 200).map((g) => {
-            const isPicked = picks.includes(g.key);
-            return (
-              <label
-                key={g.key}
-                className={`flex items-start gap-3 px-3 py-2 cursor-pointer transition ${
-                  isPicked ? "bg-primary/5" : "hover:bg-muted/50"
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={isPicked}
-                  onChange={() => toggle(g.key)}
-                  className="mt-0.5 h-4 w-4 accent-primary cursor-pointer"
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate">{g.course}</div>
-                  <div className="text-[11px] text-muted-foreground font-mono">
-                    {g.code} · {g.prog} · Sem {g.sem || "?"}
-                    {g.sec ? ` · Sec ${g.sec}` : ""}
-                    {g.sec === "R" ? " (Repeater)" : ""}
-                  </div>
-                </div>
-              </label>
-            );
-          })
-        )}
-        {filtered.length > 200 && (
-          <div className="text-center text-[11px] text-muted-foreground py-2">
-            Showing first 200. Refine your search to see more.
-          </div>
-        )}
-      </div>
-
-      <ConfirmCheck checked={confirmed} onChange={onConfirmedChange} />
-      <PrimaryButton
-        className="mt-3"
-        disabled={!confirmed || picks.length === 0}
-        onClick={onGenerate}
-      >
-        Generate my custom datesheet ({picks.length}{" "}
-        {picks.length === 1 ? "course" : "courses"})
-      </PrimaryButton>
+      <p className="text-center text-[10.5px] font-mono uppercase tracking-[0.15em] text-muted-foreground">
+        {EXAM_TERM} · from the official seating plan
+      </p>
     </>
   );
 }
 
-export default Index;
+function regFromUrl(): string {
+  try {
+    const core = new URLSearchParams(window.location.search).get("reg");
+    return core ? core.replace(/[^\wA-Z-]/gi, "").toUpperCase() : "";
+  } catch {
+    return "";
+  }
+}
+
+function setRegInUrl(core: string) {
+  const url = core ? `/exams?reg=${core}` : "/exams";
+  window.history.pushState({}, "", url);
+}
+
+function ExamsRoute() {
+  const [reg, setRegState] = useState<string>(() =>
+    typeof window === "undefined" ? "" : regFromUrl(),
+  );
+  useEffect(() => {
+    const onPop = () => setRegState(regFromUrl());
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  const { ds, loading, error } = useDataset();
+  const [input, setInput] = useState(reg ?? "");
+  const [recents, remember] = useRecents();
+  const lastLookedRef = useRef<string>("");
+
+  // Deep-link ?reg=… → jump straight to the datesheet
+  useEffect(() => {
+    if (reg && ds && lastLookedRef.current !== reg) {
+      lastLookedRef.current = reg;
+      remember(reg);
+    }
+  }, [reg, ds, remember]);
+
+  const lookup = useMemo(
+    () => (ds && reg ? lookupStudent(ds, reg) : null),
+    [ds, reg],
+  );
+
+  const setReg = useCallback((next: string) => {
+    const core = normalizeReg(next);
+    setRegState(core ?? "");
+    setRegInUrl(core ?? "");
+  }, []);
+
+  const student: StudentRec | null =
+    lookup?.kind === "found" ? lookup.student : null;
+
+  const actions = student && ds && (
+    <div className="flex flex-wrap gap-2 print:hidden">
+      <button
+        onClick={() => {
+          downloadIcs(student.papers, {
+            reg: student.reg,
+            name: student.name,
+            term: ds.term,
+          });
+          toast.success("Calendar file downloaded — open it to subscribe");
+        }}
+        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-[12px] font-medium hover:bg-muted transition"
+      >
+        <CalendarDays className="size-3.5" /> Add to calendar (.ics)
+      </button>
+      <button
+        onClick={() => {
+          if (navigator.share) {
+            navigator
+              .share({ title: "My exam datesheet", url: location.href })
+              .catch(() => {});
+          } else {
+            navigator.clipboard?.writeText(location.href);
+            toast.success("Link copied — share it with your classmates");
+          }
+        }}
+        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-[12px] font-medium hover:bg-muted transition"
+      >
+        <Share2 className="size-3.5" /> Share link
+      </button>
+      <button
+        onClick={() => window.print()}
+        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-[12px] font-medium hover:bg-muted transition"
+      >
+        <Printer className="size-3.5" /> Print
+      </button>
+      <button
+        onClick={() => {
+          setReg("");
+          setInput("");
+          toast("Cleared — enter another registration number");
+        }}
+        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-[12px] font-medium hover:bg-muted transition"
+      >
+        Clear
+      </button>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-[var(--background)] text-foreground">
+      <div className="print:hidden">
+        <AppNav />
+      </div>
+      <main className="mx-auto max-w-5xl px-4 py-8 print:max-w-none print:px-0">
+        <div className="print:hidden">
+          <Breadcrumbs
+            items={[{ label: "Home", href: "/" }, { label: "Exam datesheet" }]}
+          />
+        </div>
+        <header className="mb-6">
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight">
+            Personal exam datesheet
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {EXAM_DEPT} · {EXAM_TERM}. One registration number — get every paper
+            with its room and seat, straight from the official seating plan.
+          </p>
+        </header>
+
+        <div className="space-y-4">
+          <SearchCard
+            value={input}
+            onChange={setInput}
+            onSubmit={setReg}
+            busy={loading}
+            recents={recents}
+            error={error}
+          />
+
+          {loading && (
+            <div className="py-16 text-center text-sm text-muted-foreground">
+              <div className="mx-auto size-5 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
+              <p className="mt-3">Loading the seating plan…</p>
+            </div>
+          )}
+
+          {ds && lookup?.kind === "found" && student && (
+            <SectionCard label="Step 2 · Your datesheet">
+              <div className="space-y-3">
+                <Datesheet student={student} />
+                {actions}
+              </div>
+            </SectionCard>
+          )}
+
+          {ds && lookup?.kind === "unknown" && (
+            <SectionCard label="No seat found">
+              <div className="space-y-3 text-sm">
+                <p>
+                  <span className="font-mono">{lookup.reg}</span> has no seat in{" "}
+                  {ds.dept
+                    ? `the ${ds.dept} seating plan`
+                    : "this seating plan"}
+                  . Check the number (batch, program, and 3-digit roll) and try
+                  again.
+                </p>
+                {lookup.near.length > 0 && (
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide font-mono text-muted-foreground">
+                      close matches — click one:
+                    </p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {lookup.near.map((s) => (
+                        <button
+                          key={s.reg}
+                          onClick={() => {
+                            setInput(s.core);
+                            setReg(s.core);
+                          }}
+                          className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 font-mono text-[11px] text-primary hover:bg-primary/20 transition"
+                        >
+                          {s.core} · {s.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </SectionCard>
+          )}
+
+          {ds && lookup?.kind === "invalid" && (
+            <SectionCard label="That doesn't look like a registration number">
+              <p className="text-sm text-muted-foreground">
+                Try the format <code className="font-mono">FA25-BCS-065</code> —
+                batch, program, then your 3-digit roll number.
+              </p>
+            </SectionCard>
+          )}
+        </div>
+
+        <footer className="mt-10 border-t border-border pt-4 text-[11px] leading-relaxed text-muted-foreground">
+          <Download className="mb-0.5 inline size-3" /> Seats, rooms, and times
+          come from the official <strong>{EXAM_DEPT}</strong> seating plan —{" "}
+          {EXAM_SOURCE}. A paper sits where the department seated it; clash-room
+          windows are sequential sittings of the same official slot. Always
+          double-check against the posted hard copy.
+        </footer>
+      </main>
+    </div>
+  );
+}
+
+export default ExamsRoute;
