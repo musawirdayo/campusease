@@ -170,16 +170,33 @@
   html,
   body {
     background: var(--background) !important;
+    height: auto !important;
   }
   * {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
+
+  /* Primary print strategy: remove (display:none) every element that is NOT
+     on an ancestor path of the weekly class grid (.tt-print) or the exam
+     datesheet document (.exam-print). Hidden-but-visible elements used to
+     keep occupying layout space, which spilled blank overflow pages on
+     mobile printers. Modern browsers support :has(); older ones drop this
+     rule entirely and fall back to the visibility trick below. */
+  *:not(.tt-print):not(.exam-print):not(:has(.tt-print)):not(
+      :has(.exam-print)
+    ) {
+    display: none !important;
+  }
+  body > div {
+    min-height: 0 !important;
+  }
+
+  /* Fallback for engines without :has(): hide everything visually, then
+     reveal only the print documents. */
   body * {
     visibility: hidden;
   }
-  /* Only these subtrees print: the weekly class grid (.tt-print) and the
-     dedicated exam-datesheet document (.exam-print, in exams.tsx) */
   .tt-print,
   .tt-print *,
   .exam-print,
@@ -192,6 +209,7 @@
     left: 0;
     top: 0;
     width: 100%;
+    min-height: 0 !important;
   }
   .tt-card {
     break-inside: avoid;

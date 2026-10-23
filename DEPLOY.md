@@ -26,18 +26,18 @@ deploy production automatically and any other branch gets a preview URL.)
 
 ## 3 · Set environment variables (Project → Settings → Environment Variables)
 
-| Variable | Environments | Value source |
-|---|---|---|
-| `VITE_SUPABASE_URL` | Production + Preview | Supabase → Project Settings → API → **Project URL** |
-| `VITE_SUPABASE_PUBLISHABLE_KEY` | Production + Preview | same page → **anon / publishable key** |
-| `SUPABASE_URL` | Production + Preview | same Project URL |
-| `SUPABASE_PUBLISHABLE_KEY` | Production + Preview | same publishable key |
-| `SUPABASE_SERVICE_ROLE_KEY` | Production + Preview | same page → **service_role key** (secret — needed for student-schedule storage + admin AI settings) |
-| `AI_API_KEY` | Production + Preview | your OpenAI/Gemini/OpenRouter key (or set it from the admin panel later — the DB config wins once set) |
-| `AI_BASE_URL` | Production + Preview | e.g. `https://api.openai.com/v1` |
-| `AI_MODEL` | Production + Preview | e.g. `gemini-2.5-flash` / `gpt-4o-mini` |
-| `VITE_SITE_URL` | Production | your final domain, e.g. `https://campusease.vercel.app` |
-| `VITE_GA_MEASUREMENT_ID` · `VITE_GOOGLE_SITE_VERIFICATION` | optional | analytics / search-console |
+| Variable                                                   | Environments         | Value source                                                                                           |
+| ---------------------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------ |
+| `VITE_SUPABASE_URL`                                        | Production + Preview | Supabase → Project Settings → API → **Project URL**                                                    |
+| `VITE_SUPABASE_PUBLISHABLE_KEY`                            | Production + Preview | same page → **anon / publishable key**                                                                 |
+| `SUPABASE_URL`                                             | Production + Preview | same Project URL                                                                                       |
+| `SUPABASE_PUBLISHABLE_KEY`                                 | Production + Preview | same publishable key                                                                                   |
+| `SUPABASE_SERVICE_ROLE_KEY`                                | Production + Preview | same page → **service_role key** (secret — needed for student-schedule storage + admin AI settings)    |
+| `AI_API_KEY`                                               | Production + Preview | your OpenAI/Gemini/OpenRouter key (or set it from the admin panel later — the DB config wins once set) |
+| `AI_BASE_URL`                                              | Production + Preview | e.g. `https://api.openai.com/v1`                                                                       |
+| `AI_MODEL`                                                 | Production + Preview | e.g. `gemini-2.5-flash` / `gpt-4o-mini`                                                                |
+| `VITE_SITE_URL`                                            | Production           | your final domain, e.g. `https://campusease.vercel.app`                                                |
+| `VITE_GA_MEASUREMENT_ID` · `VITE_GOOGLE_SITE_VERIFICATION` | optional             | analytics / search-console                                                                             |
 
 `VITE_*` values get baked into the client bundle at build time — they are the
 public Supabase values only. Never put the service_role or AI keys behind a
@@ -72,7 +72,7 @@ role** — see §3 above and `supabase/setup.sql` step 6. To reach it:
      table down further.
 
 If the deployed site shows "Page not found" for any route that works locally,
-check the Vercel dashboard that the *latest* deployment built from the current
+check the Vercel dashboard that the _latest_ deployment built from the current
 commit — stale deployments from before new routes existed return 404s.
 
 ## 4 · Supabase side (one-time, already in the SQL files)

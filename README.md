@@ -8,16 +8,16 @@ schedule — for classes **and** exams.
 
 ## What it does
 
-| Route | Purpose |
-| --- | --- |
-| `/` | Landing page with a live "what's on right now" preview from the built-in CS timetable |
-| `/classes` | Weekly class-timetable builder — pick your courses, auto-resolver suggests clash-free sections, per-day stats, print / save as PDF |
-| `/exams` | Personal exam datesheet — enter a registration number, get every paper with its official room and seat; deep-linkable (`?reg=`), .ics calendar export, share link, print |
-| `/contact` | Public contact form → admin inbox |
-| `/admin` + `/admin/settings`, `/admin/messages` | Owner workspace: publish/archive schedules, AI parser configuration, contact inbox |
-| `/api/parse-timetable`, `/api/parse-datesheet` | Server-side PDF-text → structured rows (AI with a deterministic rules fallback) |
-| `/api/student-schedules` | Server-side persistence of each student's schedule (anonymous device cookie, no account needed) |
-| `/api/counter` | Shared "timetables generated" counter |
+| Route                                           | Purpose                                                                                                                                                                  |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/`                                             | Landing page with a live "what's on right now" preview from the built-in CS timetable                                                                                    |
+| `/classes`                                      | Weekly class-timetable builder — pick your courses, auto-resolver suggests clash-free sections, per-day stats, print / save as PDF                                       |
+| `/exams`                                        | Personal exam datesheet — enter a registration number, get every paper with its official room and seat; deep-linkable (`?reg=`), .ics calendar export, share link, print |
+| `/contact`                                      | Public contact form → admin inbox                                                                                                                                        |
+| `/admin` + `/admin/settings`, `/admin/messages` | Owner workspace: publish/archive schedules, AI parser configuration, contact inbox                                                                                       |
+| `/api/parse-timetable`, `/api/parse-datesheet`  | Server-side PDF-text → structured rows (AI with a deterministic rules fallback)                                                                                          |
+| `/api/student-schedules`                        | Server-side persistence of each student's schedule (anonymous device cookie, no account needed)                                                                          |
+| `/api/counter`                                  | Shared "timetables generated" counter                                                                                                                                    |
 
 Key features:
 
@@ -64,13 +64,13 @@ npm run dev
 All values are documented in [.env.example](./.env.example). Minimum for a
 working app:
 
-| Variable | Where to get it |
-| --- | --- |
-| `VITE_SUPABASE_URL` / `SUPABASE_URL` | Supabase → Project Settings → API → Project URL |
-| `VITE_SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_PUBLISHABLE_KEY` | same page → anon / publishable key |
-| `SUPABASE_SERVICE_ROLE_KEY` | same page → service_role key (**secret**, server only) |
-| `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL` | any OpenAI-compatible provider (also configurable later in the admin panel — DB settings win once set) |
-| `VITE_SITE_URL` | your production URL (optional in dev) |
+| Variable                                                     | Where to get it                                                                                        |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `VITE_SUPABASE_URL` / `SUPABASE_URL`                         | Supabase → Project Settings → API → Project URL                                                        |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_PUBLISHABLE_KEY` | same page → anon / publishable key                                                                     |
+| `SUPABASE_SERVICE_ROLE_KEY`                                  | same page → service_role key (**secret**, server only)                                                 |
+| `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL`                      | any OpenAI-compatible provider (also configurable later in the admin panel — DB settings win once set) |
+| `VITE_SITE_URL`                                              | your production URL (optional in dev)                                                                  |
 
 `VITE_*` variables are baked into the client bundle — never put secrets behind
 `VITE_`. The `service_role` and `AI_*` keys are used server-side only.

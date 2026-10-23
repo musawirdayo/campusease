@@ -11,16 +11,16 @@
 
 CampusEase is a university utility web app (COMSATS-style) for students:
 
-| Route    | Purpose |
-| -------- | ------- |
-| `/`      | Landing page |
-| `/classes` | Weekly class-timetable builder: pick courses (any source), personal grid, clash warnings, PDF download/print |
-| `/exams` | Personal exam datesheet: load a department datesheet PDF or a published doc, pick your class (or repeater custom picks), see your exams + **exam clash warnings**, print |
+| Route                                                        | Purpose                                                                                                                                                                                                         |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/`                                                          | Landing page                                                                                                                                                                                                    |
+| `/classes`                                                   | Weekly class-timetable builder: pick courses (any source), personal grid, clash warnings, PDF download/print                                                                                                    |
+| `/exams`                                                     | Personal exam datesheet: load a department datesheet PDF or a published doc, pick your class (or repeater custom picks), see your exams + **exam clash warnings**, print                                        |
 | `/admin` (hidden; type `admin` on any page or go to `/auth`) | Owner workspace, split into three pages since this pass: Publisher (PDF/JSON/built-in ingest, row review, publish/archive) at `/admin`, `/admin/settings` (AI parser config), `/admin/messages` (contact inbox) |
-| `/contact` | Public contact form → admin inbox |
-| `/api/parse-timetable`, `/api/parse-datesheet` | Server PDF-text → structured rows (AI, with deterministic fallback) |
-| `/api/counter` | Shared "timetables generated" counter (used by BOTH /classes and /exams) |
-| `/api/student-schedules` | Server-side persistence of students' schedules |
+| `/contact`                                                   | Public contact form → admin inbox                                                                                                                                                                               |
+| `/api/parse-timetable`, `/api/parse-datesheet`               | Server PDF-text → structured rows (AI, with deterministic fallback)                                                                                                                                             |
+| `/api/counter`                                               | Shared "timetables generated" counter (used by BOTH /classes and /exams)                                                                                                                                        |
+| `/api/student-schedules`                                     | Server-side persistence of students' schedules                                                                                                                                                                  |
 
 **Stack:** TanStack Start (React 19, Vite, file routes), Tailwind 4 +
 shadcn-style `src/components/ui`, Supabase (Postgres + auth + RLS), deployed to
@@ -85,6 +85,7 @@ Date | Time | Class | Sec | ST | Course | Title | Instructor | Room | Cap. | Occ
 ## 4. What changed in the Oct 2026 session (this takeover)
 
 **Exam-datesheet overhaul (latest pass):**
+
 1. **Built-in official CS v1 datesheet** — new `src/lib/cs-datesheet.ts`
    (319 exam rows, `CS_DATESHEET_EXAMS`) generated from the real
    `Mids D-Sheet CS v1.pdf` with the deterministic parser and verified page by
@@ -112,47 +113,48 @@ Date | Time | Class | Sec | ST | Course | Title | Instructor | Room | Cap. | Occ
    any department), "Import built-in CS datesheet (v1)", startup rows still
    via PDF+AI.
 
-1. **AI parser works again.** Root causes fixed:
+6. **AI parser works again.** Root causes fixed:
    - `.env.local` had an API key but EMPTY `AI_BASE_URL`/`AI_MODEL` → restored;
    - old agentrouter.org key was rejected (401) → switched to Gemini key the
      owner provided; verified strict JSON-schema output + `/api/parse-datesheet`
      end-to-end against the real new-layout PDF.
    - Validation layer now accepts "02-Nov-2026" style dates and merges
      one-exam-many-room rows (`cleanExams` in the route).
-2. **Old exam schedules deleted** — `src/lib/cs-exams.ts` removed; /exams
+7. **Old exam schedules deleted** — `src/lib/cs-exams.ts` removed; /exams
    rebuilt around published docs + PDF upload; repeater/custom builder now
    works on ANY loaded datesheet (not just CS). `supabase/cleanup-obsolete-datesheets.sql`
    archives/deletes the stale published datesheets in the DB (owner must run it).
-3. **Exam clash detection** — red banner + per-row "Clash" markers on /exams
+8. **Exam clash detection** — red banner + per-row "Clash" markers on /exams
    (`src/lib/exam-utils.ts` + tests).
-4. **Server-side persistence** — new `student_schedules` table
+9. **Server-side persistence** — new `student_schedules` table
    (`supabase/add-student-schedules.sql` — owner must run once), API route
    `/api/student-schedules` (device cookie + service-role), `useSaved()` hook;
    /classes and /exams now save/restore every session (no localStorage).
-5. **Shared counter** — /classes now bumps the same `/api/counter` as /exams.
-6. **UI/UX consistency** — /classes uses the same stepper language
-   (Step 1/2/3), stats row, confirm checkbox and "Print / Save PDF" as /exams.
-7. **WeekGrid redesign** (`src/components/WeekGrid.tsx`) — compact columns
-   (min 72px course / 18px gap, gap hatch), cleaner cards, hover shadow,
-   striped red cells for clashes, phone view unchanged in spirit.
-8. **Admin improvements** (`src/routes/_authenticated/admin.tsx`) —
-   Publish/Unpublish toggle (`setStatusSchedule` in
-   `schedules.functions.ts`), document filter box, delete requires
-   confirmation, archive requires confirmation, CS import limited to
-   timetables.
-9. **Hygiene** — removed a real API key from `.env.example`, one pre-existing
-   lint error fixed in `previewAuthStorage.ts`.
-10. **Admin clash audit** — when a datesheet is loaded in /admin (parsed or
+10. **Shared counter** — /classes now bumps the same `/api/counter` as /exams.
+11. **UI/UX consistency** — /classes uses the same stepper language
+    (Step 1/2/3), stats row, confirm checkbox and "Print / Save PDF" as /exams.
+12. **WeekGrid redesign** (`src/components/WeekGrid.tsx`) — compact columns
+    (min 72px course / 18px gap, gap hatch), cleaner cards, hover shadow,
+    striped red cells for clashes, phone view unchanged in spirit.
+13. **Admin improvements** (`src/routes/_authenticated/admin.tsx`) —
+    Publish/Unpublish toggle (`setStatusSchedule` in
+    `schedules.functions.ts`), document filter box, delete requires
+    confirmation, archive requires confirmation, CS import limited to
+    timetables.
+14. **Hygiene** — removed a real API key from `.env.example`, one pre-existing
+    lint error fixed in `previewAuthStorage.ts`.
+15. **Admin clash audit** — when a datesheet is loaded in /admin (parsed or
     opened from DB), the review panel computes `findExamClashes` over the rows
     and shows a red warning with every offending pair (or a green
     "no overlaps" confirmation) BEFORE publishing; mirrors what students see.
-11. **Roadmap re-check** — the weekly-class PDF (`timetable-pdf.ts`) already
+16. **Roadmap re-check** — the weekly-class PDF (`timetable-pdf.ts`) already
     renders a polished A4-landscape grid with hour headers, clash tags and a
     course key — the old "grid PDF" roadmap goal is considered DONE, pending
     only real-data eyeballing by the owner. Landing page exam card now
     advertises clash warnings.
 
 **Third pass — timetable algorithm, /classes UX, admin multipage:**
+
 1. **Timetable algorithm** (`src/lib/timetable.ts`) — `dedupeSessions()` removes
    exact duplicate sessions (verified: same course/day/room AND same time is the
    real rule keys off) while hand-edited start times stay distinct;
@@ -169,6 +171,7 @@ Date | Time | Class | Sec | ST | Course | Title | Instructor | Room | Cap. | Occ
    inbox). Child routes registered in the regenerated `routeTree.gen.ts`.
 
 **Owner self-service pass (no more code changes needed for new sheets):**
+
 1. **JSON paste fixed & generalized** — the "Paste JSON rows" textarea only
    rendered for datesheets before (clicking it with a timetable selected did
    nothing — the reported "JSON input does not work"). Now works for BOTH
@@ -220,7 +223,7 @@ Date | Time | Class | Sec | ST | Course | Title | Instructor | Room | Cap. | Occ
       publishes the new doc; admins already get a per-document clash audit
       (done) — next: also list clashes across ALL published datesheets in
       a "health" tab.
-- [x] ~~Local deterministic parser as a *secondary* engine~~ — parser rewritten
+- [x] ~~Local deterministic parser as a _secondary_ engine~~ — parser rewritten
       and verified against the full FA26 PDF; consistency audit shows every
       disagreement/anomaly in admin review instead of a confidence column.
 - [x] ~~V1 CS datesheet usable without parsing~~ — shipped as a built-in

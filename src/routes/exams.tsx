@@ -46,6 +46,7 @@ import {
   type CourseDetail,
 } from "@/lib/exam-data";
 import { EXAM_DEPT, EXAM_SOURCE, EXAM_TERM } from "@/lib/exam-meta";
+import { downloadExamDatesheetPdf } from "@/lib/exam-pdf";
 
 export const Route = createFileRoute("/exams")({
   head: () => ({
@@ -367,21 +368,26 @@ function ProfileHeader({
     .toUpperCase();
 
   return (
-    <div className="rounded-xl border border-border bg-card shadow-sm">
-      <div className="flex flex-wrap items-center gap-4 px-4 py-5 sm:px-5">
-        <div className="grid size-16 shrink-0 place-items-center rounded-full bg-muted font-mono text-lg font-bold text-foreground ring-2 ring-primary/25">
-          {initials || <UserRound className="size-6 text-muted-foreground" />}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-xl font-bold tracking-tight">
-            {student.name || "Unnamed student"}
+    <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+      {/* Identity · actions — side-by-side from sm up; actions become a
+          tidy toolbar row under the name on phones (flex-wrap, so no item
+          is ever clipped, whitespace-nowrap content included). */}
+      <div className="px-4 py-4 sm:flex sm:items-center sm:justify-between sm:gap-4 sm:px-5 sm:py-5">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="grid size-14 shrink-0 place-items-center rounded-full bg-muted font-mono text-lg font-bold text-foreground ring-2 ring-primary/25 sm:size-16">
+            {initials || <UserRound className="size-6 text-muted-foreground" />}
           </div>
-          <div className="mt-0.5 font-mono text-[12px] text-muted-foreground">
-            {student.reg}
+          <div className="min-w-0">
+            <div className="truncate text-lg font-bold tracking-tight sm:text-xl">
+              {student.name || "Unnamed student"}
+            </div>
+            <div className="mt-1 inline-flex max-w-full items-center rounded-md bg-muted/70 px-2 py-0.5 font-mono text-[11.5px] text-muted-foreground">
+              <span className="truncate">{student.reg}</span>
+            </div>
           </div>
         </div>
         {actions && (
-          <div className="flex flex-wrap items-center gap-2 print:hidden">
+          <div className="-mx-4 mt-3 flex flex-wrap items-center gap-x-2 gap-y-2 border-t border-border px-4 pt-3 print:hidden sm:mx-0 sm:mt-0 sm:max-w-[62%] sm:shrink-0 sm:flex-wrap-reverse sm:justify-end sm:border-0 sm:px-0 sm:pt-0">
             {actions}
           </div>
         )}
@@ -416,6 +422,14 @@ function ProfileHeader({
 
 // ─── Datesheet (screen view) ───────────────────────────────────────────────
 
+/** Compact seat chip copy: clash-room seats drop the time window that the
+ *  Time column already shows; the full text stays in the hover title. */
+function shortSeat(seat: string): string {
+  const m = seat.match(/^CR-(\d+) (1st|2nd) /);
+  if (m) return `CR-${m[1].padStart(2, "0")} · ${m[2]} sitting`;
+  return seatView(seat);
+}
+
 function PaperRow({ paper, detail }: { paper: Paper; detail?: CourseDetail }) {
   const clash = paperView.isClash(paper);
   const [start, end] = (paper.effectiveSlot ?? paper.slot).split("-");
@@ -423,7 +437,7 @@ function PaperRow({ paper, detail }: { paper: Paper; detail?: CourseDetail }) {
 
   return (
     <div
-      className={`group flex gap-3.5 px-4 py-3 transition-colors ${
+      className={`group flex gap-3 px-3.5 py-3 transition-colors sm:gap-3.5 sm:px-4 ${
         clash ? "bg-amber-500/5" : "hover:bg-muted/30"
       }`}
       style={{
@@ -432,8 +446,8 @@ function PaperRow({ paper, detail }: { paper: Paper; detail?: CourseDetail }) {
         }`,
       }}
     >
-      <div className="w-[112px] shrink-0 pt-0.5 tabular-nums">
-        <div className="font-mono text-[12.5px] font-bold leading-tight text-foreground">
+      <div className="w-[82px] shrink-0 pt-0.5 tabular-nums sm:w-[112px]">
+        <div className="font-mono text-[12px] font-bold leading-tight text-foreground sm:text-[12.5px]">
           {i12(shownSlot)}
         </div>
         {clash && (
@@ -466,14 +480,19 @@ function PaperRow({ paper, detail }: { paper: Paper; detail?: CourseDetail }) {
             </span>
             <span className="font-bold">{paperView.room(paper)}</span>
           </span>
-          <span className="inline-flex items-baseline gap-1 rounded-md bg-primary/10 px-2 py-1 font-mono text-[11px] text-primary">
+          <span
+            title={seatView(paper.seat)}
+            className="inline-flex max-w-full items-baseline gap-1 rounded-md bg-primary/10 px-2 py-1 font-mono text-[11px] text-primary"
+          >
             <span className="text-[9.5px] uppercase tracking-wider opacity-75">
               seat
             </span>
-            <span className="font-bold">{seatView(paper.seat)}</span>
+            <span className="min-w-0 font-bold">
+              <span className="break-words">{shortSeat(paper.seat)}</span>
+            </span>
           </span>
           {detail?.instructors.length ? (
-            <span className="inline-flex items-center gap-1.5 rounded-md bg-muted/50 px-2 py-1 text-[11px] text-foreground/80">
+            <span className="inline-flex max-w-full items-center gap-1.5 rounded-md bg-muted/50 px-2 py-1 text-[11px] text-foreground/80">
               <UserRound className="size-3 shrink-0 text-primary" />
               <span className="truncate font-medium">
                 {detail.instructors.join(" · ")}
@@ -1038,10 +1057,20 @@ function ExamsRoute() {
         <Share2 className="size-3.5" /> Share link
       </button>
       <button
+        onClick={() =>
+          downloadExamDatesheetPdf({ student, papers, detailMap }).catch(() =>
+            toast.error("Couldn't build the PDF — try Print instead."),
+          )
+        }
+        className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground transition hover:opacity-90"
+      >
+        <Download className="size-3.5" /> Datesheet PDF
+      </button>
+      <button
         onClick={() => window.print()}
         className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-[12px] font-medium transition hover:bg-muted"
       >
-        <Printer className="size-3.5" /> Print datesheet
+        <Printer className="size-3.5" /> Print / Save PDF
       </button>
       <button
         onClick={() => {
