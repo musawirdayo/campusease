@@ -1,5 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { createClient } from "@supabase/supabase-js";
+import {
+  deviceCookieHeader,
+  deviceFrom,
+  withDeviceCookie,
+} from "@/lib/device-cookie.server";
 
 // Students are anonymous: the "account" is a device token in an httpOnly
 // cookie. All schedule data lives server-side (student_schedules table) and
@@ -7,8 +12,6 @@ import { createClient } from "@supabase/supabase-js";
 // browser beyond that random, non-identifying token.
 const KINDS = new Set(["classes", "datesheet"]);
 const MAX_BYTES = 200_000;
-const COOKIE = "ce_device";
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // 1 year
 
 function db() {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -16,18 +19,6 @@ function db() {
   return createClient(process.env.SUPABASE_URL, key, {
     auth: { persistSession: false },
   });
-}
-
-function deviceFrom(request: Request): { token: string; fresh: boolean } {
-  const raw = request.headers.get("cookie") ?? "";
-  const match = raw.match(new RegExp(`${COOKIE}=([A-Za-z0-9_-]{10,64})`));
-  if (match) return { token: match[1], fresh: false };
-  return { token: crypto.randomUUID().replace(/-/g, ""), fresh: true };
-}
-
-function cookieHeader(token: string, fresh: boolean): string | null {
-  if (!fresh) return null;
-  return `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE}`;
 }
 
 const json = (
@@ -51,9 +42,7 @@ export const Route = createFileRoute("/api/student-schedules")({
             { status: 503 },
           );
         const { token, fresh } = deviceFrom(request);
-        const setCookie = cookieHeader(token, fresh);
-        const headers: Record<string, string> = {};
-        if (setCookie) headers["set-cookie"] = setCookie;
+        const headers = withDeviceCookie({}, deviceCookieHeader(token, fresh));
 
         const { data, error } = await client
           .from("student_schedules")
@@ -61,7 +50,7 @@ export const Route = createFileRoute("/api/student-schedules")({
           .eq("device_token", token);
         if (error)
           return json(
-            { error: error.message },
+            { error: "Could not load your saved schedules." },
             { status: 500, headers: hk(headers) },
           );
         const rows = (data ?? []).filter((r) => KINDS.has(r.kind));
@@ -86,9 +75,7 @@ export const Route = createFileRoute("/api/student-schedules")({
           return json({ error: "Schedule too large." }, { status: 413 });
 
         const { token, fresh } = deviceFrom(request);
-        const setCookie = cookieHeader(token, fresh);
-        const headers: Record<string, string> = {};
-        if (setCookie) headers["set-cookie"] = setCookie;
+        const headers = withDeviceCookie({}, deviceCookieHeader(token, fresh));
 
         const { error } = await client.from("student_schedules").upsert(
           {
@@ -101,7 +88,7 @@ export const Route = createFileRoute("/api/student-schedules")({
         );
         if (error)
           return json(
-            { error: error.message },
+            { error: "Could not save the schedule — try again." },
             { status: 500, headers: hk(headers) },
           );
         return json({ ok: true }, { headers: hk(headers) });
@@ -117,9 +104,7 @@ export const Route = createFileRoute("/api/student-schedules")({
         const url = new URL(request.url);
         const kind = url.searchParams.get("kind");
         const { token, fresh } = deviceFrom(request);
-        const setCookie = cookieHeader(token, fresh);
-        const headers: Record<string, string> = {};
-        if (setCookie) headers["set-cookie"] = setCookie;
+        const headers = withDeviceCookie({}, deviceCookieHeader(token, fresh));
         if (kind && !KINDS.has(kind))
           return json({ error: "Unknown schedule kind." }, { status: 400 });
         const q = client
@@ -129,7 +114,7 @@ export const Route = createFileRoute("/api/student-schedules")({
         const { error } = await (kind ? q.eq("kind", kind) : q);
         if (error)
           return json(
-            { error: error.message },
+            { error: "Could not delete the schedule — try again." },
             { status: 500, headers: hk(headers) },
           );
         return json({ ok: true }, { headers: hk(headers) });

@@ -1,8 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
+import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database } from "@/integrations/supabase/types";
+import { clientIp, rateLimit } from "@/lib/rate-limit.server";
 
 async function assertAdmin(context: {
   supabase: SupabaseClient<Database>;
@@ -40,6 +42,15 @@ const submitInput = z.object({
 export const submitContact = createServerFn({ method: "POST" })
   .inputValidator((input) => submitInput.parse(input))
   .handler(async ({ data }) => {
+    // App-level rate limit: 3 messages per IP per hour. Complements the
+    // tightened RLS WITH CHECK policy (migration 0004) which also enforces
+    // the same length limits directly in the database.
+    const request = getRequest();
+    const ip = request ? clientIp(request) : "unknown";
+    if (!rateLimit(`contact:${ip}`, 3, 3_600_000).ok)
+      throw new Error(
+        "Too many messages from this network — please try again later.",
+      );
     const { error } = await anonymousDb().from("contact_messages").insert({
       name: data.name,
       email: data.email,

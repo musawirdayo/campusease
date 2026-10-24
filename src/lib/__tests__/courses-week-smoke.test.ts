@@ -6,7 +6,7 @@ import { coursesWeek, type ExamDataset } from "@/lib/exam-data";
 // papers must resolve into weekly picks (per course, not per section).
 it("real dataset: SP23-BCS-109 resolves a working per-course week", async () => {
   const ds = JSON.parse(
-    readFileSync("public/data/exams-fa26-mids.json", "utf8"),
+    readFileSync("src/data/exams-fa26-mids.json", "utf8"),
   ) as ExamDataset;
   const packed = ds.students["CIIT/SP23-BCS-109/ISB"];
   expect(packed).toBeTruthy();

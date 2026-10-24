@@ -61,13 +61,13 @@ export function SiteFooter() {
             href={`https://wa.me/92${CONTACT.phone.slice(1)}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="rounded-md bg-primary text-primary-foreground px-3 py-2 font-medium hover:opacity-90"
+            className="rounded-lg bg-primary px-3 py-2 font-medium text-primary-foreground transition hover:bg-primary/90"
           >
             WhatsApp {CONTACT.phone}
           </a>
           <a
             href={`mailto:${CONTACT.email}?subject=CampusEase%20-%20timetable%2Fdatesheet`}
-            className="rounded-md border border-input px-3 py-2 hover:bg-muted"
+            className="rounded-lg border border-input px-3 py-2 transition hover:bg-accent"
           >
             {CONTACT.email}
           </a>

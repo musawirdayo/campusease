@@ -27,7 +27,9 @@ Key features:
 - **Built-in Computer Science data** — the official CS weekly timetable ships
   as an in-code dataset, and the FA26 midterm exams ship as a per-student
   seating dataset (generated from the department's official seating-plan xlsx
-  by `scripts/gen-exam-data.mjs` into `public/data/`). A personal datesheet is
+  by `scripts/gen-exam-data.mjs` into `src/data/`, bundled SERVER-SIDE only —
+  it is never shipped to the browser; the only public surface is the
+  rate-limited exact-roll `GET /api/lookup`). A personal datesheet is
   a single registration-number lookup — the seating plan already resolves
   clashes and dual-code papers (one student, one code, one seat).
 - **AI parser with fallback** — any department's PDF layout works through a
@@ -129,7 +131,8 @@ src/
     student-schedules.ts # useSaved() persistence hook
     __tests__/       # Vitest unit tests
 scripts/             # generator scripts (exam dataset from official xlsx)
-public/data/         # generated per-student exam dataset (do not hand-edit)
+src/data/           # generated per-student exam dataset (do not hand-edit; SERVER-ONLY —
+                    # contains every student's name/seat; served only via /api/lookup)
 supabase/            # one-time SQL setup scripts
 drizzle/             # migration snapshots (schema is managed via supabase/*.sql)
 ```

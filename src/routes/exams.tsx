@@ -28,20 +28,18 @@ import {
   dateView,
   groupByDay,
   i12,
-  loadExamDataset,
-  lookupStudent,
+  lookupStudentRemote,
   normalizeReg,
+  searchStudentSuggestionsRemote,
   ordinalSem,
   paperView,
   papersToIcs,
-  regIndex,
-  searchSuggestions,
   seatView,
   sortPapers,
   studentMeta,
   daysUntil,
-  type ExamDataset,
   type Paper,
+  type StudentSuggestion,
   type StudentRec,
   type CourseDetail,
 } from "@/lib/exam-data";
@@ -55,13 +53,13 @@ export const Route = createFileRoute("/exams")({
       {
         name: "description",
         content:
-          "Search a roll number or name and open the full student profile — exam datesheet with rooms and seats, courses, section, and weekly timetable, straight from the official seating plan.",
+          "Search by student name or roll number to open an exam profile with papers, rooms, seats, courses, section, and weekly classes.",
       },
       { property: "og:title", content: "Student exam profile — CampusEase" },
       {
         property: "og:description",
         content:
-          "One search away from a student's full exam profile: papers, rooms, seats, courses, and weekly classes.",
+          "Search a student by name or roll number to see papers, rooms, seats, courses, and weekly classes.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
@@ -99,30 +97,46 @@ function dayHeading(date: string): {
   };
 }
 
-function useDataset() {
-  const [state, setState] = useState<{
-    ds: ExamDataset | null;
-    error: string | null;
-    loading: boolean;
-  }>({ ds: null, error: null, loading: true });
+function useStudentLookup(reg: string): PersonState {
+  const [state, setState] = useState<PersonState>({
+    student: null,
+    status: "idle",
+    error: null,
+  });
   useEffect(() => {
+    if (!reg) {
+      setState({ student: null, status: "idle", error: null });
+      return;
+    }
     let alive = true;
-    loadExamDataset()
-      .then((ds) => alive && setState({ ds, error: null, loading: false }))
+    setState({ student: null, status: "loading", error: null });
+    // The browser asks /api/lookup for ONE selected registration number; the
+    // complete seating plan never crosses the network.
+    lookupStudentRemote(reg)
+      .then((r) => {
+        if (!alive) return;
+        if (r.kind === "found")
+          setState({ student: r.student, status: "found", error: null });
+        else if (r.kind === "invalid")
+          setState({ student: null, status: "invalid", error: null });
+        else setState({ student: null, status: "unknown", error: null });
+      })
       .catch(
         (e) =>
           alive &&
           setState({
-            ds: null,
+            student: null,
+            status: "error",
             error:
-              e instanceof Error ? e.message : "Could not load the dataset",
-            loading: false,
+              e instanceof Error
+                ? e.message
+                : "Lookup unavailable — try again in a moment.",
           }),
       );
     return () => {
       alive = false;
     };
-  }, []);
+  }, [reg]);
   return state;
 }
 
@@ -150,158 +164,219 @@ function useRecents(): [Array<{ reg: string }>, (reg: string) => void] {
   return [recents, remember];
 }
 
-// ─── Student search: type any roll-number prefix or name tokens ────────────
+// ─── Person lookup state (drives the whole page) ──────────────────────────
+
+type PersonState = {
+  student: StudentRec | null;
+  status:
+    | "idle" // no reg entered yet
+    | "loading"
+    | "found"
+    | "invalid"
+    | "unknown"
+    | "error";
+  error: string | null;
+};
 
 function SearchPeople({
-  ds,
+  busy,
   error,
   recents,
   onPick,
 }: {
-  ds: ExamDataset | null;
+  busy: boolean;
   error: string | null;
   recents: Array<{ reg: string }>;
   onPick: (core: string) => void;
 }) {
   const [q, setQ] = useState("");
+  const [items, setItems] = useState<StudentSuggestion[]>([]);
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(-1);
+  const [searching, setSearching] = useState(false);
+  const [searched, setSearched] = useState(false);
+  const [searchError, setSearchError] = useState("");
 
-  const suggestions = useMemo(
-    () => (ds && q.trim().length >= 2 ? searchSuggestions(ds, q, 8) : []),
-    [ds, q],
-  );
-  const exactCore = useMemo(() => {
-    const core = normalizeReg(q);
-    if (!core || !ds) return null;
-    return regIndex(ds).has(core) ? core : null;
-  }, [ds, q]);
+  useEffect(() => {
+    const query = q.trim();
+    if (!open || query.length < 2) {
+      setItems([]);
+      setSearching(false);
+      setSearched(false);
+      setSearchError("");
+      return;
+    }
+    let alive = true;
+    const timer = setTimeout(() => {
+      setSearching(true);
+      setSearchError("");
+      searchStudentSuggestionsRemote(query)
+        .then((suggestions) => alive && setItems(suggestions))
+        .catch((error: unknown) => {
+          if (!alive) return;
+          setItems([]);
+          setSearchError(
+            error instanceof Error ? error.message : "Search is unavailable.",
+          );
+        })
+        .finally(() => {
+          if (!alive) return;
+          setSearching(false);
+          setSearched(true);
+        });
+    }, 180);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [q, open]);
 
   const pick = useCallback(
     (core: string) => {
-      setOpen(false);
       setQ("");
+      setOpen(false);
+      setItems([]);
       setHi(-1);
       onPick(core);
     },
     [onPick],
   );
 
-  const items = suggestions;
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!items.length) {
-      if (e.key === "Enter" && exactCore) {
-        e.preventDefault();
-        pick(exactCore);
-      }
-      return;
-    }
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setOpen(true);
-      setHi((h) => (h + 1) % items.length);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setHi((h) => (h <= 0 ? items.length - 1 : h - 1));
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      if (hi >= 0 && items[hi]) pick(items[hi].core);
-      else if (exactCore) pick(exactCore);
-      else if (items[0]) pick(items[0].core);
-    } else if (e.key === "Escape") {
+  const core = normalizeReg(q);
+  const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown" && items.length) {
+      event.preventDefault();
+      setHi((current) => (current + 1) % items.length);
+    } else if (event.key === "ArrowUp" && items.length) {
+      event.preventDefault();
+      setHi((current) => (current <= 0 ? items.length - 1 : current - 1));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      const selected = items[hi] ?? items[0];
+      if (selected) pick(selected.core);
+      else if (core && !busy) pick(core);
+    } else if (event.key === "Escape") {
       setOpen(false);
     }
   };
 
   return (
-    <SectionCard label="Find a student">
-      <div className="relative">
-        <div className="flex items-center gap-2 rounded-lg border border-input bg-background px-3 focus-within:ring-2 focus-within:ring-ring">
-          <Search className="size-4 shrink-0 text-muted-foreground" />
-          <input
-            value={q}
-            onChange={(e) => {
-              setQ(e.target.value);
-              setOpen(true);
-              setHi(-1);
-            }}
-            onKeyDown={onKeyDown}
-            onFocus={() => setOpen(true)}
-            onBlur={() => setTimeout(() => setOpen(false), 120)}
-            placeholder="Roll number (FA25-BCS-065) or name (Ayesha…)"
-            spellCheck={false}
-            autoCapitalize="characters"
-            autoCorrect="off"
-            autoComplete="off"
-            data-1p-ignore
-            aria-label="Search students by roll number or name"
-            aria-expanded={open && items.length > 0}
-            aria-autocomplete="list"
-            role="combobox"
-            className="h-12 min-w-0 flex-1 bg-transparent font-mono text-base tracking-wide placeholder:font-sans placeholder:tracking-normal placeholder:text-muted-foreground/70 focus:outline-none"
-            style={{ textTransform: "uppercase" }}
-          />
-          {q && (
-            <button
-              onClick={() => {
-                setQ("");
+    <SectionCard label="Find a student exam profile">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const selected = items[hi] ?? items[0];
+          if (selected) pick(selected.core);
+          else if (core && !busy) pick(core);
+        }}
+      >
+        <div className="relative">
+          <div className="flex items-center gap-2 rounded-lg border border-input bg-background pl-3 pr-2 py-1.5 focus-within:ring-2 focus-within:ring-ring">
+            <Search className="size-4 shrink-0 text-muted-foreground" />
+            <input
+              value={q}
+              onChange={(e) => {
+                setQ(e.target.value);
                 setHi(-1);
+                setSearched(false);
+                setOpen(true);
               }}
-              aria-label="Clear search"
-              className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              onKeyDown={onKeyDown}
+              onFocus={() => setOpen(true)}
+              onBlur={() => setTimeout(() => setOpen(false), 120)}
+              placeholder="Roll number or student name"
+              spellCheck={false}
+              autoCapitalize="characters"
+              autoCorrect="off"
+              autoComplete="off"
+              data-1p-ignore
+              aria-label="Search students by roll number or name"
+              aria-expanded={open && items.length > 0}
+              aria-autocomplete="list"
+              role="combobox"
+              className="h-10 min-w-0 flex-1 bg-transparent text-sm tracking-wide placeholder:tracking-normal placeholder:text-muted-foreground/70 focus:outline-none"
+            />
+            {q && (
+              <button
+                type="button"
+                onClick={() => {
+                  setQ("");
+                  setItems([]);
+                  setHi(-1);
+                  setSearched(false);
+                  setOpen(true);
+                }}
+                aria-label="Clear search"
+                className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <X className="size-4" />
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={(!core && items.length === 0) || busy}
+              className="shrink-0 rounded-md bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-40"
             >
-              <X className="size-4" />
+              {busy ? "Loading…" : "Open profile"}
             </button>
+          </div>
+
+          {open && items.length > 0 && (
+            <div
+              role="listbox"
+              className="absolute inset-x-0 top-full z-30 mt-1.5 max-h-72 overflow-auto rounded-lg border border-border bg-card shadow-lg sm:max-h-80"
+            >
+              {items.map((student, index) => (
+                <button
+                  key={student.core}
+                  type="button"
+                  role="option"
+                  aria-selected={index === hi}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    pick(student.core);
+                  }}
+                  onMouseEnter={() => setHi(index)}
+                  className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition ${
+                    index === hi ? "bg-primary/10" : "hover:bg-muted/60"
+                  } ${index > 0 ? "border-t border-border/60" : ""}`}
+                >
+                  <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 font-mono text-[11px] font-bold text-primary">
+                    {student.name.slice(0, 1) || "·"}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-semibold">
+                      {student.name || "Unnamed student"}
+                    </span>
+                    <span className="block font-mono text-[11px] text-muted-foreground">
+                      {student.core}
+                    </span>
+                  </span>
+                  <CornerDownRight className="size-3.5 shrink-0 text-muted-foreground/50" />
+                </button>
+              ))}
+            </div>
           )}
         </div>
-
-        {open && items.length > 0 && (
-          <div
-            role="listbox"
-            className="absolute inset-x-0 top-full z-30 mt-1.5 max-h-72 overflow-auto rounded-lg border border-border bg-card shadow-lg sm:max-h-80"
-          >
-            {items.map((s, i) => (
-              <button
-                key={s.core}
-                role="option"
-                aria-selected={i === hi}
-                onMouseDown={(e) => {
-                  e.preventDefault(); // beat input blur
-                  pick(s.core);
-                }}
-                onMouseEnter={() => setHi(i)}
-                className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition ${
-                  i === hi ? "bg-primary/10" : "hover:bg-muted/60"
-                } ${i > 0 ? "border-t border-border/60" : ""}`}
-              >
-                <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 font-mono text-[11px] font-bold text-primary">
-                  {s.name.slice(0, 1) || "·"}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] font-semibold">
-                    {s.name || "Unnamed student"}
-                  </span>
-                  <span className="block font-mono text-[11px] text-muted-foreground">
-                    {s.core}
-                  </span>
-                </span>
-                <CornerDownRight className="size-3.5 shrink-0 text-muted-foreground/50" />
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      </form>
 
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
         <span>
-          Matches roll numbers <em className="font-mono not-italic">and</em>{" "}
-          names — ↑↓ to navigate, Enter to open.{" "}
+          Search by roll number or name. Use ↑↓ and Enter to choose. Full roll
+          format works too:{" "}
           <code className="rounded bg-muted px-1 font-mono text-[10px]">
             CIIT/FA25-BCS-065/ISB
           </code>{" "}
-          works too.
+          {searching && <span className="ml-2">Searching…</span>}
+          {items.length === 0 &&
+            q.trim().length >= 2 &&
+            searched &&
+            !searching &&
+            !searchError && <span className="ml-2">No matching students.</span>}
         </span>
-        {error && <span className="text-destructive">{error}</span>}
+        {(error || searchError) && (
+          <span className="text-destructive">{error || searchError}</span>
+        )}
       </div>
 
       {recents.length > 0 && (
@@ -334,7 +409,7 @@ function MetaItem({
   children: React.ReactNode;
 }) {
   return (
-    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[12px] text-muted-foreground">
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-border/80 bg-background/70 px-2 py-1 text-[12px] text-muted-foreground">
       <span className="text-foreground/50">{icon}</span>
       {children}
     </span>
@@ -368,7 +443,7 @@ function ProfileHeader({
     .toUpperCase();
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+    <div className="overflow-hidden rounded-xl border-2 border-border border-l-4 border-l-primary/70 bg-card shadow-sm">
       {/* Identity · actions — side-by-side from sm up; actions become a
           tidy toolbar row under the name on phones (flex-wrap, so no item
           is ever clipped, whitespace-nowrap content included). */}
@@ -392,7 +467,7 @@ function ProfileHeader({
           </div>
         )}
       </div>
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 border-t border-border bg-muted/30 px-4 py-3 sm:px-5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-t-2 border-border bg-muted/30 px-4 py-3 sm:px-5">
         {meta.prog && (
           <MetaItem icon={<GraduationCap className="size-3.5" />}>
             {meta.prog}
@@ -430,76 +505,109 @@ function shortSeat(seat: string): string {
   return seatView(seat);
 }
 
-function PaperRow({ paper, detail }: { paper: Paper; detail?: CourseDetail }) {
+/** One 24h "HH:MM" → "h:MM AM/PM" (the profile is 12-hour everywhere). */
+function t12(t: string): string {
+  const m = t.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return t;
+  let h = +m[1];
+  const ap = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return `${h}:${m[2]} ${ap}`;
+}
+
+function shownSlot12(start: string, end: string): string {
+  return `${t12(start)} – ${t12(end)}`;
+}
+
+function PaperRow({
+  paper,
+  detail,
+  index,
+  total,
+}: {
+  paper: Paper;
+  detail?: CourseDetail;
+  /** 1-based position of this paper within the whole term. */
+  index: number;
+  total: number;
+}) {
   const clash = paperView.isClash(paper);
   const [start, end] = (paper.effectiveSlot ?? paper.slot).split("-");
-  const shownSlot = `${start}–${end}`;
+  const clashNote = clash
+    ? `Clash Room — the ${paper.clashSession} sitting · window ${shownSlot12(start, end)}`
+    : "";
 
   return (
     <div
-      className={`group flex gap-3 px-3.5 py-3 transition-colors sm:gap-3.5 sm:px-4 ${
-        clash ? "bg-amber-500/5" : "hover:bg-muted/30"
+      className={`relative overflow-hidden rounded-xl border px-3.5 py-3 sm:px-4 ${
+        clash ? "border-amber-500/50 bg-amber-500/10" : "border-border bg-card"
       }`}
-      style={{
-        boxShadow: `inset 3px 0 0 ${
-          clash ? "var(--color-amber-500, #f59e0b)" : "transparent"
-        }`,
-      }}
     >
-      <div className="w-[82px] shrink-0 pt-0.5 tabular-nums sm:w-[112px]">
-        <div className="font-mono text-[12px] font-bold leading-tight text-foreground sm:text-[12.5px]">
-          {i12(shownSlot)}
+      <div className="flex items-start justify-between gap-3">
+        <div className="eyebrow font-semibold">
+          {paperView.code(paper)} · PAPER {index} OF {total}
         </div>
         {clash && (
-          <div className="text-[9.5px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">
-            window {paper.clashSession}
-          </div>
+          <span className="shrink-0 rounded-lg border border-amber-500/50 bg-amber-500/15 px-2 py-1 font-mono text-[10px] font-bold tracking-wide text-amber-700 dark:text-amber-300">
+            CLASH
+          </span>
         )}
       </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-          <span className="font-mono text-[11.5px] font-bold tracking-tight text-primary">
-            {paperView.code(paper)}
-          </span>
-          <span className="text-[13px] font-semibold leading-snug">
-            {paper.title}
-          </span>
-          <span className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-wide text-muted-foreground">
-            {paper.cls}
-          </span>
-          {clash && (
-            <span className="rounded-sm border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-wide text-amber-700 dark:text-amber-400">
-              clash room
-            </span>
-          )}
+      <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="text-[17px] font-semibold tracking-tight">
+          {paper.title || paperView.code(paper)}
+        </span>
+        <span className="rounded-sm border border-border bg-background/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+          {paper.cls}
+        </span>
+      </div>
+      {/* the time, stated plainly (12h) — the thing you photograph */}
+      <div
+        className="mt-2 flex items-baseline gap-2 font-mono tabular-nums"
+        style={{ letterSpacing: "-1px" }}
+      >
+        <span className="text-[26px] font-bold leading-none sm:text-[30px]">
+          {t12(start)}
+        </span>
+        <span className="text-[14px] font-medium tracking-normal text-muted-foreground">
+          – {t12(end)}
+        </span>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <div className="tile px-3 py-2.5">
+          <div className="eyebrow">Room</div>
+          <div className="mt-0.5 font-mono text-[16px] font-bold tracking-tight">
+            {paperView.room(paper)}
+          </div>
         </div>
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="inline-flex items-baseline gap-1 rounded-md bg-muted/70 px-2 py-1 font-mono text-[11px]">
-            <span className="text-[9.5px] uppercase tracking-wider text-muted-foreground">
-              room
-            </span>
-            <span className="font-bold">{paperView.room(paper)}</span>
-          </span>
-          <span
+        <div className="tile px-3 py-2.5">
+          <div className="eyebrow">Seat</div>
+          <div
             title={seatView(paper.seat)}
-            className="inline-flex max-w-full items-baseline gap-1 rounded-md bg-primary/10 px-2 py-1 font-mono text-[11px] text-primary"
+            className="mt-0.5 truncate font-mono text-[16px] font-bold tracking-tight"
           >
-            <span className="text-[9.5px] uppercase tracking-wider opacity-75">
-              seat
-            </span>
-            <span className="min-w-0 font-bold">
-              <span className="break-words">{shortSeat(paper.seat)}</span>
+            {shortSeat(paper.seat) || "—"}
+          </div>
+        </div>
+      </div>
+      <div
+        className={`mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[12px] ${
+          clash
+            ? "text-amber-700 dark:text-amber-300"
+            : "text-emerald-600 dark:text-emerald-400"
+        }`}
+      >
+        <span>
+          ● Report by 10 minutes early{clashNote ? ` · ${clashNote}` : ""}
+        </span>
+        {detail?.instructors.length ? (
+          <span className="inline-flex max-w-full items-center gap-1.5 rounded-md bg-muted/60 px-2 py-0.5 text-[11px] text-foreground/80">
+            <UserRound className="size-3 shrink-0 text-primary" />
+            <span className="truncate font-medium">
+              {detail.instructors.join(" · ")}
             </span>
           </span>
-          {detail?.instructors.length ? (
-            <span className="inline-flex max-w-full items-center gap-1.5 rounded-md bg-muted/50 px-2 py-1 text-[11px] text-foreground/80">
-              <UserRound className="size-3 shrink-0 text-primary" />
-              <span className="truncate font-medium">
-                {detail.instructors.join(" · ")}
-              </span>
-            </span>
-          ) : null}
-        </div>
+        ) : null}
       </div>
     </div>
   );
@@ -512,38 +620,10 @@ function Datesheet({
   papers: Paper[];
   detailMap: Map<string, CourseDetail>;
 }) {
-  const nextP = useMemo(() => {
-    let best: Paper | null = null;
-    for (const p of papers) {
-      if (daysUntil(p.date) < 0) continue;
-      if (!best) best = p;
-      else {
-        const ka = `${p.date}|${p.effectiveSlot ?? p.slot}`;
-        const kb = `${best.date}|${best.effectiveSlot ?? best.slot}`;
-        if (ka.localeCompare(kb) < 0) best = p;
-      }
-    }
-    return best;
-  }, [papers]);
   const clashPapers = papers.filter((p) => paperView.isClash(p));
 
   return (
     <>
-      {nextP && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5 text-[12.5px] print:hidden">
-          <Sparkles className="size-4 text-primary" />
-          <span>
-            Next paper <strong>{paperView.code(nextP)}</strong> — {nextP.title}
-          </span>
-          <CornerDownRight className="size-3 text-muted-foreground" />
-          <span className="font-mono text-[11px] text-muted-foreground">
-            {dayHeading(nextP.date).sub} ·{" "}
-            {i12(nextP.effectiveSlot ?? nextP.slot)} · {paperView.room(nextP)} ·{" "}
-            {seatView(nextP.seat)}
-          </span>
-        </div>
-      )}
-
       {clashPapers.length > 0 && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-[12px] text-amber-800 dark:text-amber-300 print:hidden">
           <strong>You have clashes this term</strong> — {clashPapers.length}{" "}
@@ -574,12 +654,14 @@ function Datesheet({
                   {h.countdown}
                 </span>
               </div>
-              <div className="divide-y divide-border">
+              <div className="space-y-2.5 px-3 py-3 sm:px-4">
                 {list.map((p) => (
                   <PaperRow
                     key={`${p.date}|${p.slot}|${p.code}|${p.seat}`}
                     paper={p}
                     detail={detailMap.get(p.code)}
+                    index={papers.indexOf(p) + 1}
+                    total={papers.length}
                   />
                 ))}
               </div>
@@ -654,7 +736,7 @@ function CoursesCard({
   );
 }
 
-// ─── Print-only datesheet document ────────────────────────────────────────
+// ─── Print-only datesheet document ──────────────────────────────────────────────
 // Mirrors the department's official datesheet layout (Date · Time · Course ·
 // Title · Instructor · Class · Room · Seat — the same columns their XLSX
 // uses). Rendered into the page but display:none on screen.
@@ -745,8 +827,7 @@ function PrintSheet({
               style={{
                 ...cells,
                 width: "55%",
-                borderBottom: `1px solid ${P_LINE}`,
-                borderRight: `1px solid ${P_LINE}`,
+                border: `1px solid ${P_LINE}`,
                 padding: "7px 10px",
               }}
             >
@@ -758,7 +839,7 @@ function PrintSheet({
             <td
               style={{
                 ...cells,
-                borderBottom: `1px solid ${P_LINE}`,
+                border: `1px solid ${P_LINE}`,
                 padding: "7px 10px",
               }}
             >
@@ -779,7 +860,7 @@ function PrintSheet({
             <td
               style={{
                 ...cells,
-                borderRight: `1px solid ${P_LINE}`,
+                border: `1px solid ${P_LINE}`,
                 padding: "7px 10px",
               }}
             >
@@ -794,7 +875,13 @@ function PrintSheet({
                   .join(" · ") || "—"}
               </div>
             </td>
-            <td style={{ ...cells, padding: "7px 10px" }}>
+            <td
+              style={{
+                ...cells,
+                border: `1px solid ${P_LINE}`,
+                padding: "7px 10px",
+              }}
+            >
               <div style={label}>Intake batch · exam window</div>
               <div style={{ fontSize: 12.5, fontWeight: 700, marginTop: 2 }}>
                 {meta.intake || "—"}
@@ -974,23 +1061,38 @@ function ExamsRoute() {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
-  const { ds, loading, error } = useDataset();
+  const person = useStudentLookup(reg);
   const [recents, remember] = useRecents();
   const [showSearch, setShowSearch] = useState(!reg);
   const lastLookedRef = useRef<string>("");
+  const lastCountedRef = useRef<string>("");
+
+  const bumpCounter = useCallback(() => {
+    fetch("/api/counter", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+    }).catch(() => {});
+  }, []);
 
   // Deep-link ?reg=… → jump straight to the profile
   useEffect(() => {
-    if (reg && ds && lastLookedRef.current !== reg) {
+    if (reg && person.status === "found" && lastLookedRef.current !== reg) {
       lastLookedRef.current = reg;
       remember(reg);
     }
-  }, [reg, ds, remember]);
+  }, [reg, person.status, remember]);
 
-  const lookup = useMemo(
-    () => (ds && reg ? lookupStudent(ds, reg) : null),
-    [ds, reg],
-  );
+  // A profile counts once after a successful lookup, including direct links.
+  // The ref avoids counting again for effects that rerun after rendering.
+  useEffect(() => {
+    if (person.status !== "found") {
+      lastCountedRef.current = "";
+    } else if (reg && lastCountedRef.current !== reg) {
+      lastCountedRef.current = reg;
+      bumpCounter();
+    }
+  }, [reg, person.status, bumpCounter]);
 
   const setReg = useCallback((next: string) => {
     const core = normalizeReg(next) ?? "";
@@ -1000,8 +1102,9 @@ function ExamsRoute() {
     if (typeof window !== "undefined") window.scrollTo({ top: 0 });
   }, []);
 
+  const loading = person.status === "loading";
   const student: StudentRec | null =
-    lookup?.kind === "found" ? lookup.student : null;
+    person.status === "found" ? person.student : null;
 
   const papers = useMemo(
     () => (student ? sortPapers(student.papers.filter((p) => p.date)) : []),
@@ -1026,14 +1129,14 @@ function ExamsRoute() {
     [details],
   );
 
-  const actions = student && ds && (
+  const actions = student && (
     <>
       <button
         onClick={() => {
           downloadIcs(student.papers, {
             reg: student.reg,
             name: student.name,
-            term: ds.term,
+            term: EXAM_TERM,
           });
           toast.success("Calendar file downloaded — open it to subscribe");
         }}
@@ -1099,11 +1202,14 @@ function ExamsRoute() {
   );
 
   return (
-    <div className="min-h-screen bg-[var(--background)] text-foreground">
+    <div className="exam-page min-h-screen bg-[var(--background)] text-foreground">
       <div className="print:hidden">
         <AppNav />
       </div>
-      <main className="mx-auto max-w-5xl px-4 py-6 sm:py-8">
+      <main
+        id="main-content"
+        className="exam-page__main mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8"
+      >
         <div className="print:hidden">
           <Breadcrumbs
             items={[{ label: "Home", href: "/" }, { label: "Exam datesheet" }]}
@@ -1112,13 +1218,13 @@ function ExamsRoute() {
 
         {!student && (
           <header className="mb-6">
-            <h1 className="mt-2 text-2xl font-semibold tracking-tight">
+            <h1 className="mt-3 text-[28px] font-bold leading-tight tracking-[-0.03em] sm:text-[32px]">
               Student exam profiles
             </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {EXAM_DEPT} · {EXAM_TERM}. Search a roll number or a name — pick
-              someone from the list to open their full exam profile: papers with
-              rooms and seats, courses, section, and weekly classes.
+            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+              {EXAM_DEPT} · {EXAM_TERM}. Search by student name or roll number
+              to open an exam profile with papers, rooms, seats, course details,
+              and weekly classes.
             </p>
           </header>
         )}
@@ -1129,20 +1235,12 @@ function ExamsRoute() {
             {student ? (
               showSearch && (
                 <div className="space-y-2">
-                  {ds ? (
-                    <SearchPeople
-                      ds={ds}
-                      error={error}
-                      recents={recents}
-                      onPick={setReg}
-                    />
-                  ) : (
-                    <div className="py-8 text-center text-sm text-muted-foreground">
-                      {loading
-                        ? "Loading the seating plan…"
-                        : error || "Dataset unavailable"}
-                    </div>
-                  )}
+                  <SearchPeople
+                    busy={loading}
+                    error={person.status === "error" ? person.error : null}
+                    recents={recents}
+                    onPick={setReg}
+                  />
                   <button
                     onClick={() => setShowSearch(false)}
                     className="mx-auto flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
@@ -1151,28 +1249,59 @@ function ExamsRoute() {
                   </button>
                 </div>
               )
-            ) : ds ? (
+            ) : (
               <SearchPeople
-                ds={ds}
-                error={error}
+                busy={loading}
+                error={person.status === "error" ? person.error : null}
                 recents={recents}
                 onPick={setReg}
               />
-            ) : (
-              <SectionCard label="Find a student">
-                <div className="py-10 text-center text-sm text-muted-foreground">
-                  {loading ? (
-                    <>
-                      <div className="mx-auto size-5 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
-                      <p className="mt-3">Loading the seating plan…</p>
-                    </>
-                  ) : (
-                    error || "Dataset unavailable"
-                  )}
-                </div>
-              </SectionCard>
             )}
           </div>
+
+          {!student && !reg && (
+            <SectionCard label="Your profile, at a glance" className="mt-5">
+              <p className="max-w-3xl text-sm leading-relaxed text-muted-foreground">
+                Search by name or roll number to see a student's exams by day,
+                with assigned rooms and seats. Profiles are ready to print or
+                save.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                {[
+                  {
+                    icon: <CalendarDays className="size-4" />,
+                    title: "Every exam, by day",
+                    detail: "Dates, paper titles, and start times in order.",
+                  },
+                  {
+                    icon: <School className="size-4" />,
+                    title: "Your room and seat",
+                    detail: "Assignments shown from the official seating plan.",
+                  },
+                  {
+                    icon: <BookOpen className="size-4" />,
+                    title: "One clear study view",
+                    detail: "Course details, clash notes, and print options.",
+                  },
+                ].map((item) => (
+                  <div
+                    key={item.title}
+                    className="rounded-xl border border-border bg-background/70 p-4"
+                  >
+                    <div className="flex items-center gap-2 text-primary">
+                      {item.icon}
+                      <h2 className="text-sm font-semibold text-foreground">
+                        {item.title}
+                      </h2>
+                    </div>
+                    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                      {item.detail}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
+          )}
 
           {student && (
             <>
@@ -1183,7 +1312,7 @@ function ExamsRoute() {
               />
 
               <SectionCard label="Exam datesheet">
-                <div className="space-y-3">
+                <div className="space-y-2.5">
                   <Datesheet papers={papers} detailMap={detailMap} />
                   <p className="text-center text-[10.5px] font-mono uppercase tracking-[0.15em] text-muted-foreground">
                     {EXAM_TERM} · from the official seating plan
@@ -1223,40 +1352,19 @@ function ExamsRoute() {
             </>
           )}
 
-          {ds && lookup?.kind === "unknown" && (
+          {person.status === "unknown" && reg && (
             <SectionCard label="No seat found">
               <div className="space-y-3 text-sm">
                 <p>
-                  <span className="font-mono">{lookup.reg}</span> has no seat in{" "}
-                  {ds.dept
-                    ? `the ${ds.dept} seating plan`
-                    : "this seating plan"}
-                  . Check the number (batch, program, and 3-digit roll) and try
-                  again.
+                  <span className="font-mono">{reg}</span> has no seat in the{" "}
+                  {EXAM_DEPT} seating plan. Check the number (batch, program,
+                  and 3-digit roll) and try again.
                 </p>
-                {lookup.near.length > 0 && (
-                  <div>
-                    <p className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground">
-                      close matches — click one:
-                    </p>
-                    <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      {lookup.near.map((s) => (
-                        <button
-                          key={s.reg}
-                          onClick={() => setReg(s.core)}
-                          className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 font-mono text-[11px] text-primary transition hover:bg-primary/20"
-                        >
-                          {s.core} · {s.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             </SectionCard>
           )}
 
-          {ds && lookup?.kind === "invalid" && (
+          {person.status === "invalid" && reg && (
             <SectionCard label="That doesn't look like a registration number">
               <p className="text-sm text-muted-foreground">
                 Try the format <code className="font-mono">FA25-BCS-065</code> —
@@ -1266,7 +1374,7 @@ function ExamsRoute() {
           )}
         </div>
 
-        <footer className="mt-10 border-t border-border pt-4 text-[11px] leading-relaxed text-muted-foreground print:hidden">
+        <footer className="mt-7 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground print:hidden">
           <Download className="mb-0.5 inline size-3" /> Seats, rooms, and times
           come from the official <strong>{EXAM_DEPT}</strong> seating plan —{" "}
           {EXAM_SOURCE}. A paper sits where the department seated it; clash-room

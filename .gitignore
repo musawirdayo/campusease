@@ -15,4 +15,9 @@ Mids D-Sheet*.pdf
 .env
 .env.*
 !.env.example
+# Official XLSX source files (contain the full seating plan + datesheet).
+# These were committed publicly in the past — untracked now; clones may still
+# hold them, but the exposure stops growing here. Students' names inside.
+*.xlsx
+
 .DS_Store

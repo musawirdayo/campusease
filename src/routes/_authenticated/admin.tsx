@@ -49,7 +49,7 @@ function AdminLayout() {
   return (
     <div className="min-h-screen bg-background">
       <AppNav />
-      <main className="mx-auto max-w-7xl px-4 py-8">
+      <main id="main-content" className="mx-auto max-w-7xl px-4 py-8">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase text-primary">

@@ -1,5 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { aiJson } from "@/lib/ai-json.server";
+import { clientIp, rateLimit } from "@/lib/rate-limit.server";
+
+// Per IP: 5/min burst, 10/hour, 30/day (see parse-timetable for rationale).
+function tooMany(): Response {
+  return Response.json(
+    { error: "Too many parses right now — please wait and try again." },
+    { status: 429 },
+  );
+}
 import { parseMidDatesheet } from "@/lib/datesheet-local";
 import { auditExams } from "@/lib/exam-utils";
 import type { Exam } from "@/lib/types";
@@ -178,6 +187,10 @@ export const Route = createFileRoute("/api/parse-datesheet")({
   server: {
     handlers: {
       POST: async ({ request }) => {
+        const ip = clientIp(request);
+        if (!rateLimit(`ai-m:${ip}`, 5, 60_000).ok) return tooMany();
+        if (!rateLimit(`ai-h:${ip}`, 10, 3_600_000).ok) return tooMany();
+        if (!rateLimit(`ai-d:${ip}`, 30, 86_400_000).ok) return tooMany();
         const body = (await request.json().catch(() => ({}))) as {
           text?: string;
         };

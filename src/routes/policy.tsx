@@ -29,7 +29,7 @@ function PolicyPage() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <AppNav />
-      <main className="mx-auto max-w-2xl px-4 py-8">
+      <main id="main-content" className="mx-auto max-w-2xl px-4 py-8">
         <Breadcrumbs
           items={[{ label: "Home", href: "/" }, { label: "Privacy policy" }]}
         />
@@ -66,8 +66,8 @@ function PolicyPage() {
               </li>
               <li>
                 <strong className="text-foreground">Aggregate counter</strong> —
-                an anonymous number of how many timetables were generated. No
-                identities attached.
+                an anonymous count that increases each time a weekly schedule or
+                exam profile is generated. No identities are attached.
               </li>
             </ul>
           </section>

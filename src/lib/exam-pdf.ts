@@ -4,15 +4,9 @@
 // layout, so the result is identical on a desktop or a phone — unlike
 // window.print(), whose CSS output mobile browsers render unpredictably.
 //
-// DESIGN (v3, "official department sheet"):
-//   · restrained letterspaced masthead over a clean double divider,
-//   · thin-bordered student panel in a precise two-column grid (values
-//     auto-fit their cell so nothing ever collides with a border),
-//   · fixed-width schedule grid — every column has a defined width and
-//     every cell the same alignment — with full-width day separator rows
-//     and hairline row rules,
-//   · notes + signature footer, page numbers when the sheet spans pages.
-//// The type scale auto-shrinks so the whole term fits one page; only an
+// DESIGN (v4, editorial student copy): restrained campus identity, a clear
+// serif title, an outlined student summary, and a finely ruled schedule.
+// The type scale auto-shrinks so the whole term fits one page; only an
 // oversized schedule (larger than any real one in the dataset) continues
 // onto a second, cleanly paginated page.
 //
@@ -42,13 +36,14 @@ const COLX = COLW.map(
 const PAD = 2.0; // horizontal cell text padding
 const TITLE_W = COLW[2] - PAD * 2;
 
-// ─── Ink palette (grays only — text and strokes, never fills) ───────────
+// ─── Ink palette (text and strokes, never fills) ────────────────────────
 type RGB = [number, number, number];
-const INK: RGB = [23, 29, 43]; // deep charcoal-navy
-const SOFT: RGB = [98, 108, 126]; // muted slate
-const DARK: RGB = [55, 61, 72];
-const RULE: RGB = [216, 221, 230]; // subtle cool gray hairlines
-const HEAVY: RGB = [23, 29, 43];
+const INK: RGB = [25, 37, 54]; // ink navy
+const SOFT: RGB = [91, 104, 121]; // slate
+const DARK: RGB = [51, 65, 82];
+const RULE: RGB = [207, 215, 224]; // cool gray hairlines
+const HEAVY: RGB = [25, 37, 54];
+const ACCENT: RGB = [177, 132, 64]; // muted brass
 
 type Row = {
   p: Paper;
@@ -76,12 +71,12 @@ function seatMeta(p: Paper): { clash: boolean; seat: string; window?: string } {
   if (m)
     return {
       clash: true,
-      seat: `CR-${m[1].padStart(2, "0")} · ${m[2]} sitting`,
+      seat: `CR-${m[1].padStart(2, "0")} / ${m[2]} sitting`,
       window: p.clashSession ?? m[2],
     };
   return {
     clash: !!p.clashSession,
-    seat: p.seat || "—",
+    seat: p.seat || "-",
     window: p.clashSession,
   };
 }
@@ -92,16 +87,16 @@ function prepRows(
 ): Row[] {
   return papers.map((p) => {
     const meta = seatMeta(p);
-    const [start, end] = i12(p.effectiveSlot ?? p.slot).split("–");
+    const [start, end] = i12(p.effectiveSlot ?? p.slot).split(/[–-]/);
     return {
       p,
       clash: meta.clash,
       window: meta.window,
       start: start ?? "",
-      end: end ? `– ${end.trim()}` : "",
+      end: end ? `- ${end.trim()}` : "",
       code: p.code || p.title,
       title: p.title,
-      inst: detailMap.get(p.code)?.instructors.join(" · ") ?? "",
+      inst: detailMap.get(p.code)?.instructors.join(" / ") ?? "",
       cls: p.cls,
       room: p.room || "Room TBA",
       seat: meta.seat,
@@ -159,27 +154,6 @@ export async function buildExamDatesheet({
     }
     return size;
   };
-  const center = (
-    t: string,
-    y: number,
-    style: "normal" | "bold" | "italic",
-    size: number,
-    c: RGB,
-    charSpace = 0,
-  ) => {
-    setF(style, size);
-    ink(c);
-    if (charSpace) {
-      // jsPDF aligns "center" WITHOUT including letterspacing (and applies
-      // charSpace in document units — mm), which pushes letterspaced lines
-      // far right of center. Compute the full visual width manually.
-      const w = doc.getTextWidth(t) + (t.length - 1) * charSpace;
-      doc.text(t, W / 2 - w / 2, y, { charSpace });
-    } else {
-      doc.text(t, W / 2, y, { align: "center" });
-    }
-  };
-
   // ─── Source data ──────────────────────────────────────────────────────
   const rows = prepRows(papers, detailMap);
   const clashCount = rows.filter((r) => r.clash).length;
@@ -191,13 +165,12 @@ export async function buildExamDatesheet({
 
   // ─── Footer copy (fixed height, measured first) ───────────────────────
   const noteA =
-    `Note — Clash Room: students with two papers at the same time sit both ` +
-    `papers there one after the other, so the seat column shows the room and ` +
-    `the sitting window.` +
+    `Clash Room: students with two papers at the same time sit them there ` +
+    `one after the other. The seat column shows the room and sitting window.` +
     (clashCount
-      ? ` This schedule includes ${clashCount} clash-room sitting${clashCount === 1 ? "" : "s"} — arrive 15 minutes early.`
+      ? ` This schedule includes ${clashCount} clash-room sitting${clashCount === 1 ? "" : "s"} - arrive 15 minutes early.`
       : "");
-  const noteB = `Source: the official ${EXAM_DEPT} seating plan — ${EXAM_SOURCE}. Always verify against the posted hard copy.`;
+  const noteB = `Source: the official ${EXAM_DEPT} seating plan - ${EXAM_SOURCE}. Verify against the posted hard copy.`;
   const noteLines = [
     ...wrap(noteA, CW - 2, "normal", 6.6),
     ...wrap(noteB, CW - 2, "normal", 6.6),
@@ -207,82 +180,114 @@ export async function buildExamDatesheet({
   const tableBottomMax = sigY - 5 - noteH - 7; // room for rule + notes + signature
 
   // ─── Masthead ──────────────────────────────────────────────────────────
-  center("COMSATS UNIVERSITY ISLAMABAD", 17, "bold", 9.5, SOFT, 1.3);
-  center("MIDTERM EXAMINATION", 25, "bold", 16, INK, 0.7);
-  center("PERSONAL DATE SHEET", 31, "bold", 10, DARK, 1.4);
-  center(EXAM_TERM.toUpperCase(), 36, "normal", 7.8, SOFT);
-  rule(HEAVY, 0.9, 39.6);
-  rule(RULE, 0.25, 41.2);
+  rule(RULE, 0.35, 10);
+  rule(ACCENT, 1.1, 10, M, M + 27);
+  setF("bold", 7.5);
+  ink(INK);
+  doc.text("COMSATS UNIVERSITY ISLAMABAD", M, 17, { charSpace: 0.65 });
+  setF("normal", 6.4);
+  ink(SOFT);
+  doc.text("CAMPUSEASE  /  PERSONAL COPY", W - M, 17, {
+    align: "right",
+    charSpace: 0.3,
+  });
+  setF("bold", 21);
+  doc.setFont("times", "bold");
+  ink(INK);
+  doc.text("Examination schedule", M, 29);
+  setF("bold", 6.8);
+  ink(SOFT);
+  doc.text(EXAM_TERM.toUpperCase().replace(/[·–—]/g, "/"), M, 35, {
+    charSpace: 0.45,
+  });
+  const paperLabel = `${rows.length} ${rows.length === 1 ? "PAPER" : "PAPERS"}`;
+  doc.setDrawColor(...RULE);
+  doc.setLineWidth(0.3);
+  doc.rect(W - M - 28, 23, 28, 14);
+  setF("bold", 8.8);
+  ink(INK);
+  doc.text(paperLabel, W - M - 14, 29, { align: "center" });
+  setF("normal", 5.6);
+  ink(SOFT);
+  doc.text("IN THIS SCHEDULE", W - M - 14, 34, {
+    align: "center",
+    charSpace: 0.35,
+  });
 
-  // ─── Student panel — precise two-column grid, thin border ─────────────
-  const py = 46;
-  const ph = 18.5;
-  const leftW = CW / 2; // perfectly equal halves
-  const HALF_W = leftW;
+  // ─── Student panel — two aligned rows with generous breathing room ────
+  const py = 43;
+  const ph = 24;
+  const panelGap = 1;
+  const panelCellW = (CW - panelGap) / 2;
+  const panelCellH = (ph - panelGap) / 2;
   const panelCell = (
     x: number,
     y: number,
     w: number,
+    h: number,
     label: string,
     value: string,
     vMax: number,
     vMin: number,
   ) => {
-    setF("normal", 5.2);
+    doc.setDrawColor(...RULE);
+    doc.setLineWidth(0.35);
+    doc.rect(x, y, w, h);
+    setF("bold", 5.4);
     ink(SOFT);
-    doc.text(label.toUpperCase(), x + 2.6, y + 3.6, { charSpace: 0.6 });
+    doc.text(label.toUpperCase(), x + 3, y + 4, { charSpace: 0.4 });
     fitSize(value, w - 5.2, "bold", vMax, vMin); // leaves the font set
     ink(INK);
-    doc.text(String(value ?? ""), x + 2.6, y + 8.4);
+    doc.text(String(value ?? ""), x + 3, y + 9.6);
   };
-  doc.setDrawColor(...HEAVY);
-  doc.setLineWidth(0.25); // thin, even frame — never thick
-  doc.rect(M, py, CW, ph);
-  rule(RULE, 0.2, py + ph / 2);
-  doc.setDrawColor(...RULE);
-  doc.setLineWidth(0.2);
-  doc.line(M + leftW, py, M + leftW, py + ph); // vertical split
+  doc.setDrawColor(...ACCENT);
+  doc.setLineWidth(1.1);
+  doc.line(M, py, M, py + ph);
   panelCell(
-    M,
+    M + 0.6,
     py,
-    HALF_W,
+    panelCellW - 0.6,
+    panelCellH,
     "Student name",
     student.name || "Unnamed student",
     11,
     7,
   );
   panelCell(
-    M + leftW,
+    M + panelCellW + panelGap,
     py,
-    HALF_W,
+    panelCellW,
+    panelCellH,
     "Registration number",
     student.reg,
     8.6,
     6.5,
   );
   panelCell(
-    M,
-    py + ph / 2,
-    HALF_W,
-    "Program · semester · section",
+    M + 0.6,
+    py + panelCellH + panelGap,
+    panelCellW - 0.6,
+    panelCellH,
+    "Program / semester / section",
     [
       meta.prog,
       meta.sem ? `${ordinalSem(meta.sem)} semester` : "",
       meta.sec ? `section ${meta.sec}` : "",
     ]
       .filter(Boolean)
-      .join(" · ") || "—",
+      .join(" / ") || "-",
     8.8,
     6.5,
   );
   panelCell(
-    M + leftW,
-    py + ph / 2,
-    HALF_W,
-    "Intake · papers · exam window",
-    `${meta.intake || "—"} · ${rows.length} papers${
+    M + panelCellW + panelGap,
+    py + panelCellH + panelGap,
+    panelCellW,
+    panelCellH,
+    "Intake / papers / exam window",
+    `${meta.intake || "-"} / ${rows.length} papers${
       dates[0]
-        ? ` · ${dateView(dates[0])} – ${dateView(dates[dates.length - 1])}`
+        ? ` / ${dateView(dates[0])} - ${dateView(dates[dates.length - 1])}`
         : ""
     }`,
     7.6,
@@ -290,8 +295,8 @@ export async function buildExamDatesheet({
   );
 
   // ─── Schedule table ───────────────────────────────────────────────────
-  const ty = py + ph + 7.5;
-  const HEAD_H = 7.4;
+  const ty = py + ph + 7;
+  const HEAD_H = 8;
 
   /** Exam days in drawing order, each with its full-width group row label. */
   const groups: DayGroup[] = [];
@@ -303,7 +308,7 @@ export async function buildExamDatesheet({
         date: r.p.date,
         label:
           new Date(`${r.p.date}T00:00:00`).toLocaleDateString("en-GB", {
-            weekday: "long",
+            weekday: "short",
             day: "numeric",
             month: "long",
             year: "numeric",
@@ -313,6 +318,8 @@ export async function buildExamDatesheet({
   }
 
   /** Paper-row height at a given type scale. */
+  let rowAir = 0;
+  let dayAir = 0;
   const rowH = (r: Row, s: number) => {
     const titleL = wrap(r.title, TITLE_W, "normal", 9 * s).length;
     const instL = r.inst ? wrap(r.inst, TITLE_W, "italic", 6.3 * s).length : 0;
@@ -326,13 +333,14 @@ export async function buildExamDatesheet({
         wrap(r.room, COLW[4] - PAD * 2, "normal", 7.4 * s).length,
         1,
       ) * lh(7.4 * s);
-    return Math.max(7.8, 2.9 + Math.max(hTime, hTitle, hOther));
+    return Math.max(7.8, 2.9 + Math.max(hTime, hTitle, hOther)) + rowAir;
   };
   const DAY_H = 7.0;
   const tableH = (s: number) =>
     HEAD_H +
     groups.reduce(
-      (a, g) => a + DAY_H + 1.6 + g.rows.reduce((b, r) => b + rowH(r, s), 0),
+      (a, g) =>
+        a + DAY_H + dayAir + 1.6 + g.rows.reduce((b, r) => b + rowH(r, s), 0),
       0,
     );
 
@@ -341,6 +349,15 @@ export async function buildExamDatesheet({
   let tbH = tableH(s);
   while (ty + tbH > tableBottomMax && s > 0.66) {
     s -= 0.04;
+    tbH = tableH(s);
+  }
+  // Light schedules get a little more row and day breathing room; dense
+  // schedules keep their compact fit. This uses spare page height without
+  // shrinking or clipping the text.
+  const spare = Math.max(0, tableBottomMax - (ty + tbH));
+  if (rows.length && spare > 0) {
+    rowAir = Math.min(3, spare / (rows.length + groups.length * 0.35));
+    dayAir = rowAir * 0.35;
     tbH = tableH(s);
   }
 
@@ -352,7 +369,8 @@ export async function buildExamDatesheet({
     let y = ty + HEAD_H;
     let cur: DayGroup[] = [];
     for (const g of groups) {
-      const gh = DAY_H + 1.6 + g.rows.reduce((b, r) => b + rowH(r, s), 0);
+      const gh =
+        DAY_H + dayAir + 1.6 + g.rows.reduce((b, r) => b + rowH(r, s), 0);
       if (cur.length && y + gh > tableBottomMax) {
         pages.push({ headY: ty, groups: cur });
         cur = [];
@@ -372,7 +390,7 @@ export async function buildExamDatesheet({
   /** Column header row, drawn at the top of every page. */
   const drawTableHead = (headY: number) => {
     rule(RULE, 0.25, headY);
-    setF("normal", 5.6);
+    setF("bold", 5.8);
     ink(SOFT);
     ["Time", "Course", "Course title", "Class", "Room", "Seat"].forEach(
       (h, i) =>
@@ -380,7 +398,7 @@ export async function buildExamDatesheet({
           charSpace: 0.45,
         }),
     );
-    rule(HEAVY, 1.1, headY + HEAD_H);
+    rule(HEAVY, 0.75, headY + HEAD_H);
   };
 
   let yEnd = ty;
@@ -388,31 +406,42 @@ export async function buildExamDatesheet({
     if (pi > 0) doc.addPage();
     const headY = pg.headY;
     drawTableHead(headY);
-    const sepTop = headY;
     let y = headY + HEAD_H;
 
     for (const g of pg.groups) {
-      // Day row: muted letterspaced label + paper count, thin rule below
-      setF("bold", 7.2 * s);
+      // Day row: brass marker, stronger date label and outlined paper count.
+      doc.setDrawColor(...ACCENT);
+      doc.setLineWidth(1.15);
+      doc.line(M, y + 0.8, M, y + DAY_H + dayAir - 0.8);
+      setF("bold", 7.6 * s);
       ink(INK);
-      doc.text(g.label.toUpperCase(), M + PAD, y + 4.4, { charSpace: 0.7 });
-      setF("normal", 6.4 * s);
+      doc.text(g.label.toUpperCase(), M + PAD + 1, y + 4.4, { charSpace: 0.5 });
+      const countW = 19;
+      const countX = W - M - PAD - countW;
+      doc.setDrawColor(...RULE);
+      doc.setLineWidth(0.25);
+      doc.rect(countX, y + 1.1, countW, 4.8);
+      setF("bold", 5.5 * s);
       ink(SOFT);
       doc.text(
-        `${g.rows.length} paper${g.rows.length === 1 ? "" : "s"}`,
-        W - M - PAD,
-        y + 4.4,
-        { align: "right" },
+        `${g.rows.length} ${g.rows.length === 1 ? "PAPER" : "PAPERS"}`,
+        countX + countW / 2,
+        y + 4.35,
+        { align: "center" },
       );
-      y += DAY_H;
+      y += DAY_H + dayAir;
       rule(RULE, 0.3, y);
       y += 1.6;
 
       for (const r of g.rows) {
         const h = rowH(r, s);
         const firstBase = y + 2.4; // top of the text block
-        // hairline separator under every paper row (no fills anywhere)
+        // A quiet outline keeps the six aligned data fields easy to scan.
         rule(RULE, 0.15, y + h);
+        doc.setDrawColor(...RULE);
+        doc.setLineWidth(0.12);
+        for (let i = 1; i < COLX.length; i++)
+          doc.line(COLX[i], y, COLX[i], y + h);
         // Time: start bold over "– end" soft, + clash tag when clash-room
         setF("bold", 8.2 * s);
         ink(INK);
@@ -424,12 +453,12 @@ export async function buildExamDatesheet({
           setF("bold", 5.7 * s);
           ink(DARK);
           doc.text(
-            `[Clash · ${r.window ?? "clash"} sitting]`,
+            `[Clash - ${r.window ?? "clash"} sitting]`,
             COLX[0] + PAD,
             firstBase + lh(8.2 * s) + lh(7 * s) + 0.6,
           );
         }
-        // Course code · Title (primary) · instructor beneath (muted italic)
+        // Course code and title (primary), instructor beneath (muted italic)
         setF("bold", 7.8 * s);
         ink(INK);
         doc.text(r.code, COLX[1] + PAD, firstBase + lh(8.2 * s) * 0.82);
@@ -466,12 +495,8 @@ export async function buildExamDatesheet({
       }
     }
 
-    // Column separators across this page's schedule body
-    doc.setDrawColor(...RULE);
-    doc.setLineWidth(0.12);
-    for (let i = 1; i < COLX.length; i++) doc.line(COLX[i], sepTop, COLX[i], y);
-    rule(HEAVY, 1.1, y);
-    rule(RULE, 0.25, y + 1.4); // closing hairline, mirrors the masthead
+    rule(HEAVY, 0.75, y);
+    rule(RULE, 0.25, y + 1.4);
     yEnd = y;
   });
 
@@ -494,7 +519,7 @@ export async function buildExamDatesheet({
     for (let i = 1; i <= total; i++) {
       doc.setPage(i);
       doc.text(
-        `CampusEase · generated ${new Date().toLocaleDateString("en-GB")}`,
+        `CampusEase / generated ${new Date().toLocaleDateString("en-GB")}`,
         M,
         sigY,
       );
@@ -503,11 +528,11 @@ export async function buildExamDatesheet({
     doc.setPage(total);
   } else {
     doc.text(
-      `CampusEase · generated ${new Date().toLocaleDateString("en-GB")}`,
+      `CampusEase / generated ${new Date().toLocaleDateString("en-GB")}`,
       M,
       sigY,
     );
-    doc.text("Made by Musawir", W - M, sigY, { align: "right" });
+    doc.text("Personal examination plan", W - M, sigY, { align: "right" });
   }
 
   return doc;

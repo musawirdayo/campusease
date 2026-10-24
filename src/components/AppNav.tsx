@@ -1,12 +1,10 @@
 import { useEffect, useRef } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { ArrowRight, CalendarDays } from "lucide-react";
 
-const base =
-  "px-2.5 sm:px-3 py-1.5 rounded-md text-sm font-medium transition whitespace-nowrap";
-const active = { className: "bg-primary text-primary-foreground" };
-const inactive = {
-  className: "text-muted-foreground hover:text-foreground hover:bg-muted",
-};
+const linkBase = "app-nav__link";
+const active = { className: "app-nav__link is-active" };
+const inactive = { className: "app-nav__link" };
 
 export function AppNav() {
   const navigate = useNavigate();
@@ -39,41 +37,59 @@ export function AppNav() {
   }, [navigate]);
 
   return (
-    <nav className="sticky top-0 z-40 bg-card/80 backdrop-blur border-b border-border print:hidden">
-      <div className="mx-auto max-w-6xl px-4 h-14 flex items-center justify-between gap-3">
-        <Link to="/" className="font-semibold tracking-tight">
-          Campus<span className="text-primary">Ease</span>
-        </Link>
-        <div className="flex items-center gap-0.5 sm:gap-1">
-          <Link
-            to="/classes"
-            className={base}
-            activeProps={active}
-            inactiveProps={inactive}
-          >
-            <span aria-hidden="true" className="sm:hidden">
-              Timetable
+    <>
+      <a
+        href="#main-content"
+        className="sr-only fixed left-3 top-3 z-[60] rounded-lg bg-card px-4 py-2 text-sm font-medium text-foreground shadow-lg focus:not-sr-only focus:outline-none focus:ring-2 focus:ring-ring"
+      >
+        Skip to main content
+      </a>
+      <nav aria-label="Main navigation" className="app-nav print:hidden">
+        <div className="app-nav__inner">
+          <Link to="/" className="app-nav__brand" aria-label="CampusEase home">
+            <span className="app-nav__mark" aria-hidden="true">
+              <CalendarDays className="size-[18px]" strokeWidth={1.8} />
             </span>
-            <span className="hidden sm:inline">Class timetable</span>
+            <span className="app-nav__wordmark">
+              <strong>
+                Campus<span>Ease</span>
+              </strong>
+            </span>
           </Link>
-          <Link
-            to="/exams"
-            className={base}
-            activeProps={active}
-            inactiveProps={inactive}
-          >
-            Exams
-          </Link>
-          <Link
-            to="/contact"
-            className={base}
-            activeProps={active}
-            inactiveProps={inactive}
-          >
-            Contact
+
+          <div className="app-nav__links">
+            <Link
+              to="/classes"
+              className={linkBase}
+              activeProps={active}
+              inactiveProps={inactive}
+            >
+              <span>Classes</span>
+            </Link>
+            <Link
+              to="/exams"
+              className={linkBase}
+              activeProps={active}
+              inactiveProps={inactive}
+            >
+              <span>Exams</span>
+            </Link>
+            <Link
+              to="/contact"
+              className={linkBase}
+              activeProps={active}
+              inactiveProps={inactive}
+            >
+              <span>Contact</span>
+            </Link>
+          </div>
+
+          <Link to="/classes" className="app-nav__cta">
+            <span>Build a timetable</span>
+            <ArrowRight aria-hidden="true" />
           </Link>
         </div>
-      </div>
-    </nav>
+      </nav>
+    </>
   );
 }

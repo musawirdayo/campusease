@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { DAY_FULL, fmt12, toMin, type Picked } from "@/lib/timetable";
+import { DAYS, DAY_FULL, fmt12, toMin, type Picked } from "@/lib/timetable";
 import {
   buildGridLayout,
   fmtMin,
@@ -14,21 +14,23 @@ function ClassCard({ c, compact = false }: { c: GridCell; compact?: boolean }) {
   const ink = clash ? "var(--destructive)" : tone(c.color);
   return (
     <div
-      className="tt-card group flex h-full flex-col gap-0.5 rounded-lg border-l-4 px-2.5 py-2 text-left shadow-xs transition-shadow hover:shadow-md"
+      className={`tt-card group flex h-full flex-col gap-0.5 rounded-lg border-l-4 px-2.5 py-2 text-left shadow-sm transition-[box-shadow,transform] duration-200 hover:shadow-md motion-safe:hover:-translate-y-px motion-reduce:transition-none focus-within:shadow-md ${
+        clash ? "border-dashed" : ""
+      }`}
       style={{
         borderColor: `color-mix(in oklab, ${ink} 60%, transparent)`,
         borderLeftWidth: 4,
+        // Mix against the SOLID card colour, never `transparent` — mixing
+        // against transparency lets the row's zebra background bleed through
+        // and made the text swim against the background.
         background: clash
-          ? `repeating-linear-gradient(135deg, color-mix(in oklab, ${ink} 8%, var(--card)) 0 6px, color-mix(in oklab, ${ink} 16%, var(--card)) 6px 12px)`
-          : `color-mix(in oklab, ${ink} 7%, var(--card))`,
-        outline: clash
-          ? `1px solid color-mix(in oklab, ${ink} 55%, transparent)`
-          : `1px solid color-mix(in oklab, ${ink} 22%, var(--border))`,
+          ? `repeating-linear-gradient(135deg, color-mix(in oklab, ${ink} 28%, var(--card)) 0 6px, color-mix(in oklab, ${ink} 8%, var(--card)) 6px 12px)`
+          : `color-mix(in oklab, ${ink} 14%, var(--card))`,
       }}
     >
       <div className="flex items-center justify-between gap-2">
         <span
-          className="font-mono text-[11px] font-bold tracking-tight"
+          className="min-w-0 truncate font-mono text-[11px] font-bold tracking-tight"
           style={{ color: ink }}
         >
           {p.code}
@@ -48,8 +50,8 @@ function ClassCard({ c, compact = false }: { c: GridCell; compact?: boolean }) {
       </div>
       <div
         className={`font-semibold leading-snug text-foreground ${
-          compact ? "text-[13px]" : "text-[12.5px]"
-        }`}
+          compact ? "text-sm" : "text-[13px]"
+        } min-w-0 break-words line-clamp-3`}
       >
         {p.title}
       </div>
@@ -59,15 +61,15 @@ function ClassCard({ c, compact = false }: { c: GridCell; compact?: boolean }) {
         </div>
         <div className="truncate">
           {s.room ? (
-            <span className="font-medium text-foreground/70">{s.room}</span>
+            <span className="font-medium text-foreground/85">{s.room}</span>
           ) : (
-            <span className="italic">Room TBA</span>
+            <span className="italic text-foreground/70">Room TBA</span>
           )}
           <span className="opacity-50"> · </span>
           {p.cls}
         </div>
         {s.instructor && (
-          <div className="truncate opacity-80" title={s.instructor}>
+          <div className="truncate text-foreground/70" title={s.instructor}>
             {s.instructor}
           </div>
         )}
@@ -88,6 +90,9 @@ export function WeekGrid({
 }) {
   const g = buildGridLayout(picks);
   if (!g.days.length) return null;
+  const weekRows = DAYS.map(
+    (day) => g.rows.find((row) => row.day === day) ?? { day, lanes: [] },
+  );
 
   // Compact template: course columns keep a readable minimum; free gaps shrink
   // aggressively so the grid concentrates on where classes actually live.
@@ -120,7 +125,7 @@ export function WeekGrid({
       {/* Desktop + print: days down, time slots across */}
       <div className="hidden overflow-x-auto rounded-xl border border-border bg-card md:block print:block print:overflow-visible print:rounded-none print:border-foreground/40">
         <div
-          className="grid min-w-max print:min-w-0"
+          className="grid w-full min-w-0 print:min-w-0"
           style={{ gridTemplateColumns: template }}
         >
           {/* corner cell */}
@@ -157,11 +162,11 @@ export function WeekGrid({
             </div>
           ))}
 
-          {g.rows.map(({ day, lanes }, ri) => {
+          {weekRows.map(({ day, lanes }, ri) => {
             const top = row;
-            row += lanes.length;
+            const laneRows = Math.max(1, lanes.length);
+            row += laneRows;
             const zebra = ri % 2 ? "bg-muted/20" : "";
-            const laneRows = lanes.length;
             return (
               <Fragment key={day}>
                 {/* day cell */}
@@ -176,8 +181,9 @@ export function WeekGrid({
                     {DAY_FULL[day]}
                   </div>
                   <div className="text-[9.5px] text-muted-foreground">
-                    {lanes.flat().length} class
-                    {lanes.flat().length === 1 ? "" : "es"}
+                    {lanes.length === 0
+                      ? "Free day"
+                      : `${lanes.flat().length} class${lanes.flat().length === 1 ? "" : "es"}`}
                   </div>
                 </div>
                 {/* background cells keep the grid lines visible */}
@@ -205,6 +211,14 @@ export function WeekGrid({
                     </div>
                   )),
                 )}
+                {lanes.length === 0 && (
+                  <div
+                    className="flex min-h-12 items-center border-t border-border px-4 text-xs text-muted-foreground"
+                    style={{ gridRow: top, gridColumn: "2 / -1" }}
+                  >
+                    No classes scheduled
+                  </div>
+                )}
               </Fragment>
             );
           })}
@@ -213,23 +227,32 @@ export function WeekGrid({
 
       {/* Phones: one day at a time, same cards */}
       <div className="space-y-3 md:hidden print:hidden">
-        {g.rows.map(({ day, lanes }) => (
+        {weekRows.map(({ day, lanes }) => (
           <div key={day}>
             <div className="mb-1.5 flex items-baseline justify-between border-b border-border pb-1">
               <span className="text-sm font-bold">{DAY_FULL[day]}</span>
               <span className="text-[11px] text-muted-foreground">
-                {lanes.flat().length} class
-                {lanes.flat().length === 1 ? "" : "es"}
+                {lanes.length === 0
+                  ? "Free day"
+                  : `${lanes.flat().length} class${lanes.flat().length === 1 ? "" : "es"}`}
               </span>
             </div>
-            <div className="space-y-2">
-              {lanes
-                .flat()
-                .sort((a, b) => toMin(a.session.start) - toMin(b.session.start))
-                .map((c) => (
-                  <ClassCard key={c.session.sid} c={c} compact />
-                ))}
-            </div>
+            {lanes.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border px-3 py-2.5 text-xs text-muted-foreground">
+                No classes scheduled
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {lanes
+                  .flat()
+                  .sort(
+                    (a, b) => toMin(a.session.start) - toMin(b.session.start),
+                  )
+                  .map((c) => (
+                    <ClassCard key={c.session.sid} c={c} compact />
+                  ))}
+              </div>
+            )}
           </div>
         ))}
       </div>

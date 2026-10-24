@@ -1,5 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { aiJson } from "@/lib/ai-json.server";
+import { clientIp, rateLimit } from "@/lib/rate-limit.server";
+
+// Without this anyone with curl could burn the whole Gemini quota (each call
+// is a ~90s vision parse with up to 3 retries). Per IP: 5/min burst,
+// 10/hour, 30/day.
+function tooMany(): Response {
+  return Response.json(
+    { error: "Too many parses right now — please wait and try again." },
+    { status: 429 },
+  );
+}
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
@@ -87,6 +98,10 @@ export const Route = createFileRoute("/api/parse-timetable")({
   server: {
     handlers: {
       POST: async ({ request }) => {
+        const ip = clientIp(request);
+        if (!rateLimit(`ai-m:${ip}`, 5, 60_000).ok) return tooMany();
+        if (!rateLimit(`ai-h:${ip}`, 10, 3_600_000).ok) return tooMany();
+        if (!rateLimit(`ai-d:${ip}`, 30, 86_400_000).ok) return tooMany();
         const json = (b: unknown, status = 200) => Response.json(b, { status });
         const body = (await request.json().catch(() => ({}))) as {
           text?: string;

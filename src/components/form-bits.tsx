@@ -1,11 +1,17 @@
 import * as React from "react";
 
-/** Small all-caps label used above card content — the site-wide section marker. */
-export function SectionLabel({ children }: { children: React.ReactNode }) {
+/** Clear, compact heading used above a tool section. */
+export function SectionLabel({
+  children,
+  id,
+}: {
+  children: React.ReactNode;
+  id?: string;
+}) {
   return (
-    <div className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground font-mono">
+    <h2 id={id} className="text-sm font-semibold tracking-wide text-foreground">
       {children}
-    </div>
+    </h2>
   );
 }
 
@@ -19,13 +25,15 @@ export function SectionCard({
   label?: React.ReactNode;
   className?: string;
 }) {
+  const headingId = React.useId();
   return (
     <section
-      className={`bg-card border border-border rounded-lg p-4 shadow-sm sm:p-5 ${className}`}
+      aria-labelledby={label != null ? headingId : undefined}
+      className={`rounded-2xl border border-border bg-card p-4 shadow-sm transition-shadow duration-200 hover:shadow-md motion-reduce:transition-none sm:p-5 ${className}`}
     >
       {label != null && (
-        <div className="mb-3">
-          <SectionLabel>{label}</SectionLabel>
+        <div className="mb-4 border-b border-border pb-3">
+          <SectionLabel id={headingId}>{label}</SectionLabel>
         </div>
       )}
       {children}
@@ -55,7 +63,7 @@ export function Field({
 }
 
 const CONTROL =
-  "w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
+  "w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
 
 /** Consistent text input. */
 export function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
@@ -69,16 +77,19 @@ export function Select({
   onChange,
   children,
   className = "",
+  ariaLabel,
 }: {
   value: string;
   onChange: (value: string) => void;
   children: React.ReactNode;
   className?: string;
+  ariaLabel?: string;
 }) {
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      aria-label={ariaLabel}
       className={`${CONTROL} ${className}`}
     >
       {children}
@@ -86,29 +97,38 @@ export function Select({
   );
 }
 
-/** Two-state segmented toggle, matching the exams page mode switcher. */
+/** Two-state segmented toggle — inset pill per the builder mockup. */
 export function Segmented<T extends string>({
   options,
   value,
   onChange,
   disabled,
+  ariaLabel,
 }: {
   options: { id: T; label: string; disabled?: boolean }[];
   value: T;
   onChange: (id: T) => void;
   disabled?: boolean;
+  ariaLabel?: string;
 }) {
   return (
-    <div className="flex rounded-md border border-border overflow-hidden text-xs font-medium">
-      {options.map((option, i) => (
+    <div
+      className="flex gap-1 rounded-[10px] border border-border/80 bg-muted/40 p-1"
+      role="group"
+      aria-label={ariaLabel}
+    >
+      {options.map((option) => (
         <button
           key={option.id}
           type="button"
+          aria-pressed={value === option.id}
           disabled={disabled || option.disabled}
           onClick={() => onChange(option.id)}
-          className={`flex-1 px-3 py-2 transition whitespace-nowrap disabled:opacity-40 ${
-            i > 0 ? "border-l border-border" : ""
-          } ${value === option.id ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}
+          className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 disabled:opacity-40 ${
+            value === option.id
+              ? "bg-card text-foreground shadow-sm ring-1 ring-primary/15"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
         >
           {option.label}
         </button>
@@ -117,7 +137,7 @@ export function Segmented<T extends string>({
   );
 }
 
-/** Primary call-to-action button used across tool pages. */
+/** Primary call-to-action button — blue→indigo gradient per the mockups. */
 export function PrimaryButton({
   children,
   ...props
@@ -126,7 +146,23 @@ export function PrimaryButton({
   return (
     <button
       {...rest}
-      className={`w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90 transition disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+      className={`w-full rounded-[10px] bg-gradient-to-br from-indigo-700 via-primary to-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-primary/20 transition hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed motion-reduce:transition-none ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Bordered, transparent action button (the mockup's .gh). */
+export function GhostButton({
+  children,
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const { className = "", ...rest } = props;
+  return (
+    <button
+      {...rest}
+      className={`rounded-[10px] border border-input bg-transparent px-4 py-2.5 text-sm font-semibold text-foreground transition hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
     >
       {children}
     </button>

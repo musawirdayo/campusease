@@ -3,12 +3,12 @@ import {
   buildStudentTimetable,
   coursesWeek,
   dateView,
+  daysUntil,
   groupByDay,
   i12,
   lookupStudent,
   normalizeReg,
   papersToIcs,
-  searchSuggestions,
   seatView,
   slotStart,
   sortPapers,
@@ -150,12 +150,11 @@ describe("lookupStudent", () => {
     }
   });
 
-  it("suggests near matches for an unknown number", () => {
+  it("returns nothing about anyone else for an unknown number (privacy)", () => {
     const r = lookupStudent(ds, "FA25-BCS-066");
-    expect(r.kind).toBe("unknown");
-    if (r.kind === "unknown") {
-      expect(r.near.map((s) => s.core)).toContain("FA25-BCS-065");
-    }
+    // The old near-match suggestions leaked whose reg number is adjacent.
+    // A lookup of an unknown roll must not name, list or number any student.
+    expect(r).toEqual({ kind: "unknown", reg: "CIIT/FA25-BCS-066/ISB" });
   });
 
   it("rejects unparseable input", () => {
@@ -212,59 +211,9 @@ describe("clash-room papers keep real sitting windows", () => {
   });
 });
 
-describe("searchSuggestions", () => {
-  it("matches roll numbers by compact prefix, dashes optional", () => {
-    for (const q of [
-      "FA25",
-      "fa25-",
-      "FA25BCS",
-      "FA25-BCS-",
-      "FA25-BCS-0",
-      "fa25bcs065",
-      "FA25-BCS-065",
-    ]) {
-      const cores = searchSuggestions(ds, q).map((s) => s.core);
-      expect(cores).toContain("FA25-BCS-065");
-    }
-  });
-
-  it("matches digits-only queries against the roll segment", () => {
-    const cores = searchSuggestions(ds, "065").map((s) => s.core);
-    expect(cores[0]).toBe("FA25-BCS-065");
-    // rolls starting with 0: 065 and 001
-    expect(searchSuggestions(ds, "0").length).toBe(2);
-  });
-
-  it("matches names token-wise, partial tokens included", () => {
-    for (const q of [
-      "Ayesha",
-      "AYESHA KH",
-      "MUHAMMAD UMAR",
-      "umar",
-      " SAAD ALI ",
-    ]) {
-      const names = searchSuggestions(ds, q).map((s) => s.name);
-      expect(names.length).toBeGreaterThan(0);
-    }
-    expect(searchSuggestions(ds, "ayesha")[0]?.name).toBe("AYESHA KHAN");
-  });
-
-  it("prefix-of-name hits outrank substring-only hits", () => {
-    const got = searchSuggestions(ds, "a").map((s) => s.name);
-    expect(got[0]).toBe("AYESHA KHAN");
-  });
-
-  it("respects the limit", () => {
-    expect(searchSuggestions(ds, "A", 1)).toHaveLength(1);
-    expect(searchSuggestions(ds, "A", 2).length).toBeLessThanOrEqual(2);
-  });
-
-  it("returns nothing for empty or unmatched queries", () => {
-    expect(searchSuggestions(ds, "")).toEqual([]);
-    expect(searchSuggestions(ds, "ZZZZ")).toEqual([]);
-    expect(searchSuggestions(ds, "ayesha smith")).toEqual([]);
-  });
-});
+// searchSuggestions was REMOVED on purpose: name search let a stranger find
+// where any classmate sits from a typed name. If you find yourself tempted to
+// re-add suggestions, reread the privacy model at the top of exam-data.ts.
 
 const paper = (code: string, title: string, cls: string): Paper => ({
   date: "2026-11-02",
@@ -339,6 +288,16 @@ describe("slotStart", () => {
   it("converts HH:MM to minutes", () => {
     expect(slotStart("08:30-09:50")).toBe(510);
     expect(slotStart("16:00-17:20")).toBe(960);
+  });
+});
+
+describe("daysUntil", () => {
+  it("uses local calendar days across midnight", () => {
+    const beforeMidnight = new Date(2026, 9, 23, 23, 59);
+    const afterMidnight = new Date(2026, 9, 24, 0, 1);
+    expect(daysUntil("2026-10-24", beforeMidnight)).toBe(1);
+    expect(daysUntil("2026-10-24", afterMidnight)).toBe(0);
+    expect(daysUntil("2026-10-23", afterMidnight)).toBe(-1);
   });
 });
 

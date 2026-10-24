@@ -72,61 +72,63 @@ function AuthPage() {
   return (
     <div className="min-h-screen bg-background">
       <AppNav />
-      <main className="mx-auto max-w-md px-5 py-16">
-        <div className="mb-8 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+      <main id="main-content" className="mx-auto max-w-lg px-5 py-12 sm:py-16">
+        <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl border border-primary/25 bg-primary/10 text-primary">
           <LockKeyhole />
         </div>
-        <p className="text-xs font-semibold uppercase text-primary">
+        <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-primary">
           Private owner area
         </p>
-        <h1 className="mt-2 text-3xl font-semibold">
+        <h1 className="mt-2 text-[30px] font-bold tracking-[-0.03em]">
           {mode === "in" ? "Welcome back" : "Create owner access"}
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Only the registered CampusEase owner can publish department schedules.
         </p>
-        <form onSubmit={submit} className="mt-8 space-y-4">
-          <label className="block text-sm font-medium">
-            Email
-            <input
-              required
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="mt-1.5 w-full rounded-md border border-input bg-card px-3 py-2.5"
-            />
-          </label>
-          <label className="block text-sm font-medium">
-            Password
-            <input
-              required
-              minLength={8}
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="mt-1.5 w-full rounded-md border border-input bg-card px-3 py-2.5"
-            />
-          </label>
-          {message && (
-            <p className="rounded-md bg-muted p-3 text-sm">{message}</p>
-          )}
-          <Button className="w-full" disabled={busy}>
-            {busy
-              ? "Please wait…"
-              : mode === "in"
-                ? "Sign in"
-                : "Create account"}
+        <div className="mt-7 rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
+          <form onSubmit={submit} className="space-y-4">
+            <label className="block text-sm font-medium">
+              Email
+              <input
+                required
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="mt-1.5 w-full rounded-md border border-input bg-card px-3 py-2.5"
+              />
+            </label>
+            <label className="block text-sm font-medium">
+              Password
+              <input
+                required
+                minLength={8}
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="mt-1.5 w-full rounded-md border border-input bg-card px-3 py-2.5"
+              />
+            </label>
+            {message && (
+              <p className="rounded-md bg-muted p-3 text-sm">{message}</p>
+            )}
+            <Button className="w-full" disabled={busy}>
+              {busy
+                ? "Please wait…"
+                : mode === "in"
+                  ? "Sign in"
+                  : "Create account"}
+            </Button>
+          </form>
+          <Button
+            variant="link"
+            className="mt-3 px-0"
+            onClick={() => setMode(mode === "in" ? "create" : "in")}
+          >
+            {mode === "in"
+              ? "First time? Create owner access"
+              : "Already registered? Sign in"}
           </Button>
-        </form>
-        <Button
-          variant="link"
-          className="mt-3 px-0"
-          onClick={() => setMode(mode === "in" ? "create" : "in")}
-        >
-          {mode === "in"
-            ? "First time? Create owner access"
-            : "Already registered? Sign in"}
-        </Button>
+        </div>
       </main>
     </div>
   );

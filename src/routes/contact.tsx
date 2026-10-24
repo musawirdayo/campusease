@@ -61,66 +61,79 @@ function ContactPage() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <AppNav />
-      <main className="mx-auto max-w-2xl px-4 py-8">
+      <main id="main-content" className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
         <Breadcrumbs
           items={[{ label: "Home", href: "/" }, { label: "Contact" }]}
         />
-        <h1 className="mt-3 text-2xl font-semibold tracking-tight">Contact</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <h1 className="mt-3 text-[30px] font-bold leading-tight tracking-[-0.03em]">
+          Contact
+        </h1>
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
           Found a mistake in your department's timetable or datesheet? Want your
           department added? Write here — every message reaches the CampusEase
           owner directly.
         </p>
 
-        {sent && (
-          <div className="mt-6 rounded-md border border-primary/40 bg-primary/5 px-3 py-2.5 text-sm text-primary">
-            ✓ Delivered. You'll usually get a reply within a day or two.
+        <div className="mt-6 rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-6">
+          <div className="mb-5 border-b border-border pb-3">
+            <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+              Send a message
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Include the department and schedule details if you are reporting
+              an issue.
+            </p>
           </div>
-        )}
+          {sent && (
+            <div className="mb-4 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2.5 text-sm text-primary">
+              ✓ Delivered. You'll usually get a reply within a day or two.
+            </div>
+          )}
 
-        <form onSubmit={submit} className="mt-6 space-y-4" noValidate={false}>
-          <label className="block text-sm font-medium">
-            Name
-            <input
-              required
-              maxLength={120}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="mt-1.5 w-full rounded-md border border-input bg-card px-3 py-2.5"
-            />
-          </label>
-          <label className="block text-sm font-medium">
-            Email
-            <input
-              required
-              type="email"
-              maxLength={200}
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="mt-1.5 w-full rounded-md border border-input bg-card px-3 py-2.5"
-            />
-          </label>
-          <label className="block text-sm font-medium">
-            Message
-            <textarea
-              required
-              minLength={10}
-              maxLength={4000}
-              rows={6}
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              placeholder="Department, what's wrong or missing, and (if you can) attach nothing here — describe the issue and send the PDF on WhatsApp."
-              className="mt-1.5 w-full rounded-md border border-input bg-card px-3 py-2.5"
-            />
-          </label>
-          <button
-            type="submit"
-            disabled={busy}
-            className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-50"
-          >
-            {busy ? "Sending…" : "Send message"}
-          </button>
-        </form>
+          <form onSubmit={submit} className="space-y-4" noValidate={false}>
+            <label className="block text-sm font-medium">
+              Name
+              <input
+                required
+                maxLength={120}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="mt-1.5 w-full rounded-lg border border-input bg-card px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </label>
+            <label className="block text-sm font-medium">
+              Email
+              <input
+                required
+                type="email"
+                maxLength={200}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="mt-1.5 w-full rounded-lg border border-input bg-card px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </label>
+            <label className="block text-sm font-medium">
+              Message
+              <textarea
+                required
+                minLength={10}
+                maxLength={4000}
+                rows={6}
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Department, what's wrong or missing, and (if you can) attach nothing here — describe the issue and send the PDF on WhatsApp."
+                className="mt-1.5 w-full rounded-lg border border-input bg-card px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={busy}
+              className="w-full rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
+            >
+              {busy ? "Sending…" : "Send message"}
+            </button>
+          </form>
+        </div>
 
         <p className="mt-4 text-xs text-muted-foreground">
           Prefer to chat?{" "}

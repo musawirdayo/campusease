@@ -20,6 +20,7 @@ import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
 import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 import { Route as ApiCounterRouteImport } from './routes/api/counter'
+import { Route as ApiLookupRouteImport } from './routes/api/lookup'
 import { Route as ApiParseDatesheetRouteImport } from './routes/api/parse-datesheet'
 import { Route as ApiParseTimetableRouteImport } from './routes/api/parse-timetable'
 import { Route as ApiStudentSchedulesRouteImport } from './routes/api/student-schedules'
@@ -81,6 +82,11 @@ const ApiCounterRoute = ApiCounterRouteImport.update({
   path: '/api/counter',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiLookupRoute = ApiLookupRouteImport.update({
+  id: '/api/lookup',
+  path: '/api/lookup',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiParseDatesheetRoute = ApiParseDatesheetRouteImport.update({
   id: '/api/parse-datesheet',
   path: '/api/parse-datesheet',
@@ -125,6 +131,7 @@ export interface FileRoutesByFullPath {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/admin': typeof AuthenticatedAdminRouteWithChildren
   '/api/counter': typeof ApiCounterRoute
+  '/api/lookup': typeof ApiLookupRoute
   '/api/parse-datesheet': typeof ApiParseDatesheetRoute
   '/api/parse-timetable': typeof ApiParseTimetableRoute
   '/api/student-schedules': typeof ApiStudentSchedulesRoute
@@ -142,6 +149,7 @@ export interface FileRoutesByTo {
   '/robots.txt': typeof RobotsDottxtRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/api/counter': typeof ApiCounterRoute
+  '/api/lookup': typeof ApiLookupRoute
   '/api/parse-datesheet': typeof ApiParseDatesheetRoute
   '/api/parse-timetable': typeof ApiParseTimetableRoute
   '/api/student-schedules': typeof ApiStudentSchedulesRoute
@@ -162,6 +170,7 @@ export interface FileRoutesById {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRouteWithChildren
   '/api/counter': typeof ApiCounterRoute
+  '/api/lookup': typeof ApiLookupRoute
   '/api/parse-datesheet': typeof ApiParseDatesheetRoute
   '/api/parse-timetable': typeof ApiParseTimetableRoute
   '/api/student-schedules': typeof ApiStudentSchedulesRoute
@@ -182,6 +191,7 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/admin'
     | '/api/counter'
+    | '/api/lookup'
     | '/api/parse-datesheet'
     | '/api/parse-timetable'
     | '/api/student-schedules'
@@ -199,6 +209,7 @@ export interface FileRouteTypes {
     | '/robots.txt'
     | '/sitemap.xml'
     | '/api/counter'
+    | '/api/lookup'
     | '/api/parse-datesheet'
     | '/api/parse-timetable'
     | '/api/student-schedules'
@@ -218,6 +229,7 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/_authenticated/admin'
     | '/api/counter'
+    | '/api/lookup'
     | '/api/parse-datesheet'
     | '/api/parse-timetable'
     | '/api/student-schedules'
@@ -237,6 +249,7 @@ export interface RootRouteChildren {
   RobotsDottxtRoute: typeof RobotsDottxtRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   ApiCounterRoute: typeof ApiCounterRoute
+  ApiLookupRoute: typeof ApiLookupRoute
   ApiParseDatesheetRoute: typeof ApiParseDatesheetRoute
   ApiParseTimetableRoute: typeof ApiParseTimetableRoute
   ApiStudentSchedulesRoute: typeof ApiStudentSchedulesRoute
@@ -321,6 +334,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCounterRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/lookup': {
+      id: '/api/lookup'
+      path: '/api/lookup'
+      fullPath: '/api/lookup'
+      preLoaderRoute: typeof ApiLookupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/parse-datesheet': {
       id: '/api/parse-datesheet'
       path: '/api/parse-datesheet'
@@ -403,6 +423,7 @@ const rootRouteChildren: RootRouteChildren = {
   RobotsDottxtRoute: RobotsDottxtRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   ApiCounterRoute: ApiCounterRoute,
+  ApiLookupRoute: ApiLookupRoute,
   ApiParseDatesheetRoute: ApiParseDatesheetRoute,
   ApiParseTimetableRoute: ApiParseTimetableRoute,
   ApiStudentSchedulesRoute: ApiStudentSchedulesRoute,

@@ -8,7 +8,7 @@
 //      cross-check the seating rows at generation time.
 //
 // Output:
-//   public/data/exams-fa26-mids.json  — compact, indexed dataset fetched on
+//   src/data/exams-fa26-mids.json  — compact, indexed dataset bundled
 //                                       demand by /exams
 //   src/lib/exam-meta.ts              — tiny static summary for SSR/landing
 //
@@ -290,10 +290,10 @@ for (const p of resolved[1])
     `  ${round.dates[p[0]]} ${round.slots[p[1]]} ${round.courses[p[2]]} ${round.classes[p[3]]} · ${round.rooms[p[4]]} · ${round.seats[p[5]]}`,
   );
 
-mkdirSync("public/data", { recursive: true });
-writeFileSync("public/data/exams-fa26-mids.json", json + "\n");
+mkdirSync("src/data", { recursive: true });
+writeFileSync("src/data/exams-fa26-mids.json", json + "\n");
 const kb = Math.round(json.length / 1024);
-console.log(`\nwrote public/data/exams-fa26-mids.json — ${kb} KB raw`);
+console.log(`\nwrote src/data/exams-fa26-mids.json — ${kb} KB raw`);
 
 // tiny static summary module for the landing page + admin
 writeFileSync(

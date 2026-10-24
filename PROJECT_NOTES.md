@@ -152,6 +152,13 @@ Date | Time | Class | Sec | ST | Course | Title | Instructor | Room | Cap. | Occ
     course key — the old "grid PDF" roadmap goal is considered DONE, pending
     only real-data eyeballing by the owner. Landing page exam card now
     advertises clash warnings.
+17. **Platform visual redesign** — aligned the app to the provided
+    `landing-page-template-*.webp` reference: white surfaces, indigo type,
+    warm yellow accents, outlined cards, and the existing illustrated calendar
+    characters. Shared tokens, font rendering, navigation, and form surfaces
+    carry that system across routes. The class-builder and exam-profile empty
+    states now provide useful outlined guidance, and reuse the existing
+    illustrations and reduced-motion-aware animations.
 
 **Third pass — timetable algorithm, /classes UX, admin multipage:**
 

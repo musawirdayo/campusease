@@ -17,7 +17,7 @@ import {
 // the REAL generated dataset must produce a valid document that is exactly
 // ONE A4 page (the old CSS-print path spilled blank pages on phones).
 const ds = JSON.parse(
-  readFileSync("public/data/exams-fa26-mids.json", "utf8"),
+  readFileSync("src/data/exams-fa26-mids.json", "utf8"),
 ) as ExamDataset;
 
 const index = regIndex(ds);

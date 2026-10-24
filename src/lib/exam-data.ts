@@ -1,14 +1,14 @@
 // Client-side engine for the built-in per-student exam dataset.
 //
-// The dataset (public/data/exams-fa26-mids.json) is generated from the
-// department's official final seating plan — every student-exam row with its
-// room and seat — so a personal datesheet is ONE lookup by registration
-// number. No uploads, no section picking, no clash guessing: the department
-// already resolved every overlap (see clashRoom windows below).
+// PRIVACY MODEL: the full dataset never reaches the browser any more. It used
+// to live at public/data/exams-fa26-mids.json (names + reg numbers + rooms +
+// seats for every student, downloaded by every visitor); it now ships only in
+// the server bundle. Search returns a limited list of matching names/rolls;
+// only an exact selection returns that student's papers, room, and seat.
 //
 // Design notes:
-//  - string tables keep the JSON compact; resolvePaper() turns indices into
-//    typed papers.
+//  - string tables keep the dataset compact; resolvePaper() turns indices into
+//    typed papers (server side).
 //  - normalizeReg() accepts the many ways students type their reg no:
 //    "fa25-bcs-065", "FA25-BCS-65", "CIIT/FA25-BCS-065/ISB", spacing included.
 //  - Students with clashing papers sit them sequentially in the Clash Room;
@@ -47,25 +47,43 @@ export type Paper = {
   clashSession?: string;
 };
 
-// ─── Dataset loading (fetched on demand, module-cached) ─────────────────────
-export const EXAM_DATA_URL = "/data/exams-fa26-mids.json";
+// ─── Search and exact lookup via the server ───────────────────────────────
+export const LOOKUP_URL = "/api/lookup?reg=";
+export const SEARCH_URL = "/api/lookup?q=";
 
-let cachePromise: Promise<ExamDataset> | null = null;
+export type StudentSuggestion = { core: string; name: string };
 
-export function loadExamDataset(): Promise<ExamDataset> {
-  cachePromise ??= fetch(EXAM_DATA_URL, { cache: "no-cache" })
-    .then(async (r) => {
-      if (!r.ok) throw new Error(`Dataset unavailable (HTTP ${r.status})`);
-      const json = (await r.json()) as ExamDataset;
-      if (!json || !json.students || !json.dates?.length)
-        throw new Error("Dataset is malformed");
-      return json;
-    })
-    .catch((e) => {
-      cachePromise = null; // retry next time
-      throw e;
+export function searchStudentSuggestionsRemote(
+  input: string,
+): Promise<StudentSuggestion[]> {
+  const query = input.trim();
+  if (query.length < 2) return Promise.resolve([]);
+  return fetch(`${SEARCH_URL}${encodeURIComponent(query)}`, {
+    cache: "no-store",
+  }).then(async (r) => {
+    if (r.status === 429)
+      throw new Error("Too many lookups — wait a moment and try again.");
+    if (!r.ok) throw new Error(`Student search unavailable (HTTP ${r.status})`);
+    const result = (await r.json()) as { suggestions?: StudentSuggestion[] };
+    return result.suggestions ?? [];
+  });
+}
+
+export function lookupStudentRemote(input: string): Promise<StudentLookup> {
+  const core = normalizeReg(input);
+  if (!core)
+    return Promise.resolve({
+      kind: "invalid",
+      input: String(input ?? "").trim(),
     });
-  return cachePromise;
+  return fetch(`${LOOKUP_URL}${encodeURIComponent(core)}`, {
+    cache: "no-store",
+  }).then(async (r) => {
+    if (r.status === 429)
+      throw new Error("Too many lookups — wait a moment and try again.");
+    if (!r.ok) throw new Error(`Seating plan unavailable (HTTP ${r.status})`);
+    return r.json() as Promise<StudentLookup>;
+  });
 }
 
 // ─── Registration number handling ───────────────────────────────────────────
@@ -92,9 +110,8 @@ export function normalizeReg(input: string): string | null {
 
 export type StudentLookup =
   | { kind: "found"; reg: string; student: StudentRec }
-  | { kind: "suggestions"; reg: string; list: Suggestion[] }
   | { kind: "invalid"; input: string }
-  | { kind: "unknown"; reg: string; near: Suggestion[] };
+  | { kind: "unknown"; reg: string };
 
 export type StudentRec = {
   reg: string; // full CIIT/…/ISB form
@@ -103,7 +120,8 @@ export type StudentRec = {
   papers: Paper[];
 };
 
-export type Suggestion = { reg: string; core: string; name: string };
+// Search suggestions reveal only a matching name and roll number. The exact
+// lookup below is still required before showing papers, room, or seat details.
 
 const fullForm = (core: string) => `CIIT/${core}/ISB`;
 
@@ -149,131 +167,17 @@ export function studentFromDataset(ds: ExamDataset, reg: string): StudentRec {
   };
 }
 
-/** Closest candidate tokens to a core, for "did you mean …" hints. */
-function nearMatches(ds: ExamDataset, core: string): Suggestion[] {
-  const [batch, prog, num] = core.split("-");
-  const out: Suggestion[] = [];
-  for (const reg of Object.keys(ds.students).sort()) {
-    const c = normalizeReg(reg);
-    if (!c) continue;
-    const [b, p, n] = c.split("-");
-    if (b === batch && p === prog) {
-      out.push({ reg, core: c, name: ds.names[ds.students[reg][0]] ?? "" });
-      continue;
-    }
-    if (n === num && (p === prog || b === batch)) {
-      out.push({ reg, core: c, name: ds.names[ds.students[reg][0]] ?? "" });
-      continue;
-    }
-    if (p === prog) {
-      out.push({ reg, core: c, name: ds.names[ds.students[reg][0]] ?? "" });
-      continue;
-    }
-    if (out.length >= 5) break;
-  }
-  return out.slice(0, 5);
-}
-
-/** The single entry point: resolve a typed registration number. */
+/** The single entry point: resolve a typed registration number.
+ *  Exact matches only — unknown numbers return nothing about anyone else. */
 export function lookupStudent(ds: ExamDataset, input: string): StudentLookup {
   const core = normalizeReg(input);
   if (!core) return { kind: "invalid", input: String(input ?? "").trim() };
   const reg = regIndex(ds).get(core);
   if (reg) return { kind: "found", reg, student: studentFromDataset(ds, reg) };
-  return { kind: "unknown", reg: fullForm(core), near: nearMatches(ds, core) };
+  return { kind: "unknown", reg: fullForm(core) };
 }
 
-// ─── Type-ahead suggestions (roll numbers + names) ───────────────────────
-
-/**
- * Suggest students as the user types either a roll number or a name.
- *
- * Roll-number matching is prefix/segment based, so every natural way of
- * typing works: "FA25", "FA25-BCS-", "fa25bcs0", "FA25-BCS-065", "065".
- * Name matching requires EVERY typed token to appear in the name, so
- * "AYESHA KH" finds AYESHA KHAN but "AYESHA SMITH" finds nothing.
- *
- * Ordering: names that START with the first token come before the rest;
- * roll hits lead when the query looks roll-ish (digits present), else names lead.
- */
-export function searchSuggestions(
-  ds: ExamDataset,
-  query: string,
-  limit = 8,
-): Suggestion[] {
-  const q = String(query ?? "")
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, " ");
-  if (!q) return [];
-  const compact = compactOf(q);
-  const tokens = q.split(" ").filter(Boolean);
-
-  const nameHits: Suggestion[] = [];
-  const rollHits: Suggestion[] = [];
-  const push = (list: Suggestion[], s: Suggestion) => {
-    if (!list.some((x) => x.core === s.core)) list.push(s);
-  };
-
-  for (const reg of Object.keys(ds.students)) {
-    const core = normalizeReg(reg);
-    if (!core) continue;
-    const s: Suggestion = {
-      reg,
-      core,
-      name: ds.names[ds.students[reg][0]] ?? "",
-    };
-
-    // Roll-number hit: compact prefix of the compact core ("FA25BCS0"),
-    // or each typed part prefixes its core segment ("FA25-BCS-0"),
-    // or a digits-only query prefixes the roll ("065").
-    if (compact) {
-      const segs = core.split("-"); // [batch, prog, roll]
-      const segQuery = q.split(/[^A-Z0-9]+/).filter(Boolean);
-      const segsMatch =
-        segQuery.length > 1 &&
-        segQuery.every((part, i) => segs[i]?.startsWith(part));
-      if (
-        compactOf(core).startsWith(compact) ||
-        segsMatch ||
-        (/^\d+$/.test(compact) && segs[2].startsWith(compact))
-      )
-        push(rollHits, s);
-    }
-
-    // Name hit: every token appears in the name (order irrelevant).
-    if (tokens.every((t) => s.name.includes(t))) push(nameHits, s);
-  }
-
-  // Names first alphabetically, names that START with the first token ahead.
-  nameHits.sort(
-    (a, b) =>
-      +b.name.startsWith(tokens[0] ?? "") -
-        +a.name.startsWith(tokens[0] ?? "") ||
-      a.name.localeCompare(b.name) ||
-      order(a, b),
-  );
-  // Rolls ordered naturally batch → program → roll.
-  rollHits.sort(order);
-
-  // Digits/batch-token queries lead with roll matches; otherwise names lead.
-  const rollish = /^\d+$/.test(compact) || compact.length >= 4;
-  const merged = rollish
-    ? [
-        ...rollHits,
-        ...nameHits.filter((n) => !rollHits.some((r) => r.core === n.core)),
-      ]
-    : [
-        ...nameHits,
-        ...rollHits.filter((r) => !nameHits.some((n) => n.core === r.core)),
-      ];
-  return merged.slice(0, limit);
-}
-
-const compactOf = (s: string) => s.replace(/[^A-Z0-9]/g, "");
-const order = (a: Suggestion, b: Suggestion) => a.core.localeCompare(b.core);
-
-// ─── Ordering / grouping helpers ─────────────────────────────────────────────
+// ─── Ordering / grouping helpers ─────────────────────────────────────────
 export function slotStart(slot: string): number {
   const m = slot.match(/^(\d{1,2}):(\d{2})/);
   return m ? +m[1] * 60 + +m[2] : 0;
@@ -281,11 +185,20 @@ export function slotStart(slot: string): number {
 
 const DAY_MS = 86_400_000;
 
+/** Format a date using the viewer's local calendar rather than UTC. */
+export function localDateKey(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
 /** Whole days from today to the paper (negative = past). */
 export function daysUntil(date: string, now = new Date()): number {
-  const today = Math.floor(now.getTime() / DAY_MS);
-  const then = Math.floor(new Date(`${date}T00:00:00`).getTime() / DAY_MS);
-  return isNaN(then) ? 0 : then - today;
+  const then = new Date(`${date}T00:00:00`);
+  if (isNaN(then.getTime())) return 0;
+  const dayNumber = (value: Date) =>
+    Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()) / DAY_MS;
+  return dayNumber(then) - dayNumber(now);
 }
 
 /** Papers sorted chronologically, using the real sitting time for clash-room rows. */
